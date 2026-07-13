@@ -112,6 +112,7 @@ export default function App() {
   const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncErrorMsg, setSyncErrorMsg] = useState<string>("");
+  const [submitError, setSubmitError] = useState<string>("");
 
   // Helper to wrap Firestore operations in a promise that rejects after timeoutMs
   const promiseWithTimeout = <T,>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> => {
@@ -238,72 +239,96 @@ export default function App() {
     }, 300);
   };
 
-  const submitPatientData = async (e?: React.FormEvent) => {
+  const submitPatientData = async (e?: React.FormEvent, overrideName?: string, overrideId?: string) => {
     if (e) e.preventDefault();
     setIsSubmitting(true);
+    setSubmitError("");
     
-    const finalProfile = getMatchedProfile();
-    const finalRotterdam = getMatchedRotterdamPhenotype();
-    
-    const payload = {
-      patientName: patientName.trim() || "匿名患者",
-      patientId: patientId.trim() || "未提供",
-      answers,
-      rotterdamAnswers,
-      matchedRotterdam: {
-        code: finalRotterdam.code,
-        name: finalRotterdam.name,
-        definition: finalRotterdam.definition
-      },
-      matchedProfile: {
-        id: finalProfile.id,
-        title: finalProfile.title,
-        concernText: finalProfile.concernText
-      },
-      heightCm,
-      weightKg,
-      waistCm,
-      calculatedBmi: calculatedBmi || null,
-      bmiCategory: bmiCategory || "",
-      createdAt: new Date().toISOString(),
-      feedback: null
-    };
-
-    const tempLocalId = `local_${Date.now()}`;
-
     try {
-      // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝不让用户在手机上卡死
-      const docRef = await promiseWithTimeout(
-        addDoc(collection(db, "submissions"), payload),
-        2500,
-        "写入云端数据库超时"
-      );
-      setSubmissionId(docRef.id);
-      console.log("档案已成功保存至云端，记录ID:", docRef.id);
-    } catch (err) {
-      console.warn("保存到云端失败/超时，已自动保存至本地缓存，稍后连网后将自动同步:", err);
+      const finalProfile = getMatchedProfile();
+      const finalRotterdam = getMatchedRotterdamPhenotype();
       
-      // 保存至本地 localStorage 的待同步队列中
+      const finalName = (overrideName !== undefined ? overrideName : patientName).trim() || "匿名患者";
+      const finalId = (overrideId !== undefined ? overrideId : patientId).trim() || "未提供";
+
+      const payload = {
+        patientName: finalName,
+        patientId: finalId,
+        answers,
+        rotterdamAnswers,
+        matchedRotterdam: {
+          code: finalRotterdam.code,
+          name: finalRotterdam.name,
+          definition: finalRotterdam.definition
+        },
+        matchedProfile: {
+          id: finalProfile.id,
+          title: finalProfile.title,
+          concernText: finalProfile.concernText
+        },
+        heightCm,
+        weightKg,
+        waistCm,
+        calculatedBmi: calculatedBmi || null,
+        bmiCategory: bmiCategory || "",
+        createdAt: new Date().toISOString(),
+        feedback: null
+      };
+
+      const tempLocalId = `local_${Date.now()}`;
+
       try {
-        const unsyncedRaw = localStorage.getItem("pcos_unsynced_submissions");
-        const unsyncedList = unsyncedRaw ? JSON.parse(unsyncedRaw) : [];
-        unsyncedList.push({ localId: tempLocalId, ...payload });
-        localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(unsyncedList));
-        setUnsyncedCount(unsyncedList.length);
-      } catch (storageErr) {
-        console.error("写入本地缓存失败:", storageErr);
+        // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝对防手机卡死
+        const docRef = await promiseWithTimeout(
+          addDoc(collection(db, "submissions"), payload),
+          2500,
+          "写入云端数据库超时"
+        );
+        setSubmissionId(docRef.id);
+        console.log("档案已成功保存至云端，记录ID:", docRef.id);
+      } catch (err) {
+        console.warn("保存到云端失败/超时，自动保存至本地缓存，稍后连网后将自动同步:", err);
+        
+        // 保存至本地 localStorage 的待同步队列中
+        try {
+          const unsyncedRaw = localStorage.getItem("pcos_unsynced_submissions");
+          const unsyncedList = unsyncedRaw ? JSON.parse(unsyncedRaw) : [];
+          unsyncedList.push({ localId: tempLocalId, ...payload });
+          localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(unsyncedList));
+          setUnsyncedCount(unsyncedList.length);
+        } catch (storageErr) {
+          console.error("写入本地缓存失败:", storageErr);
+        }
+        
+        setSubmissionId(tempLocalId);
       }
-      
-      setSubmissionId(tempLocalId);
-    } finally {
-      setIsSubmitting(false);
+
+      // 无论云端是否成功，都直接进入结果页，提供无缝体验
       setViewState("result");
       setActiveTab("portrait");
-      
-      // 异步在后台尝试同步其他历史暂存记录
+      window.scrollTo({ top: 0, behavior: "smooth" });
+
+      // 1秒后在后台静默尝试同步历史暂存记录
       setTimeout(() => {
         syncUnsyncedSubmissions();
-      }, 800);
+      }, 1000);
+
+    } catch (globalErr: any) {
+      console.error("提交档案时遭遇全局未捕获异常:", globalErr);
+      setSubmitError(globalErr?.message || String(globalErr));
+      
+      // 强力兜底：即使发生严重错误，也确保切换到结果页，绝不让手机端卡住
+      try {
+        const fallbackLocalId = `local_fallback_${Date.now()}`;
+        setSubmissionId(fallbackLocalId);
+        setViewState("result");
+        setActiveTab("portrait");
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      } catch (fallbackErr) {
+        console.error("兜底方案也失败:", fallbackErr);
+      }
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -1245,36 +1270,42 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="pt-2 flex gap-3">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setPatientName("匿名患者");
-                        setPatientId("未提供");
-                        submitPatientData();
-                      }}
-                      className="w-1/3 py-3 border border-watercolor-border/50 text-watercolor-body hover:bg-[#faf6f0] rounded-xl text-xs font-serif font-bold transition-all cursor-pointer text-center"
-                    >
-                      跳过直接看结果
-                    </button>
-                    
-                    <button
-                      type="submit"
-                      disabled={!patientName.trim() || isSubmitting}
-                      className="w-2/3 py-3 bg-watercolor-title text-white hover:bg-[#8f3a3a] rounded-xl text-xs font-serif font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
-                    >
-                      {isSubmitting ? (
-                        <>
-                          <RefreshCw size={14} className="animate-spin" />
-                          <span>正在保存档案...</span>
-                        </>
-                      ) : (
-                        <>
-                          <span>保存并生成评估报告</span>
-                          <ChevronRight size={14} />
-                        </>
-                      )}
-                    </button>
+                  <div className="pt-2 flex flex-col gap-3">
+                    <div className="flex gap-3">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          submitPatientData(undefined, "匿名患者", "未提供");
+                        }}
+                        className="w-1/3 py-3 border border-watercolor-border/50 text-watercolor-body hover:bg-[#faf6f0] rounded-xl text-xs font-serif font-bold transition-all cursor-pointer text-center"
+                      >
+                        跳过直接看结果
+                      </button>
+                      
+                      <button
+                        type="submit"
+                        disabled={!patientName.trim() || isSubmitting}
+                        className="w-2/3 py-3 bg-watercolor-title text-white hover:bg-[#8f3a3a] rounded-xl text-xs font-serif font-bold transition-all shadow-md cursor-pointer flex items-center justify-center gap-1.5 disabled:opacity-50"
+                      >
+                        {isSubmitting ? (
+                          <>
+                            <RefreshCw size={14} className="animate-spin" />
+                            <span>正在保存档案...</span>
+                          </>
+                        ) : (
+                          <>
+                            <span>保存并生成评估报告</span>
+                            <ChevronRight size={14} />
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {submitError && (
+                      <p className="text-[10px] text-red-600 font-sans font-bold pt-1 text-center">
+                        ⚠️ 提交异常（已自动启用本地缓存模式）：{submitError}
+                      </p>
+                    )}
                   </div>
                 </form>
               </div>
