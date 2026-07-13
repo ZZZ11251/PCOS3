@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import {
   Stethoscope,
@@ -109,6 +109,94 @@ export default function App() {
   const [filterPhenotype, setFilterPhenotype] = useState<string>("all");
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
 
+  const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncErrorMsg, setSyncErrorMsg] = useState<string>("");
+
+  // Helper to wrap Firestore operations in a promise that rejects after timeoutMs
+  const promiseWithTimeout = <T,>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> => {
+    return Promise.race([
+      promise,
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error(errorMsg)), timeoutMs))
+    ]);
+  };
+
+  // Check unsynced list on load
+  useEffect(() => {
+    const checkUnsynced = () => {
+      const raw = localStorage.getItem("pcos_unsynced_submissions");
+      if (raw) {
+        try {
+          const parsed = JSON.parse(raw);
+          setUnsyncedCount(parsed.length || 0);
+        } catch {
+          setUnsyncedCount(0);
+        }
+      } else {
+        setUnsyncedCount(0);
+      }
+    };
+    checkUnsynced();
+    
+    // Auto-sync once on mount after 1.5 seconds (gives network time to settle)
+    const timer = setTimeout(() => {
+      syncUnsyncedSubmissions();
+    }, 1500);
+    
+    return () => clearTimeout(timer);
+  }, []);
+
+  // Sync function to upload any unsynced submissions from localStorage
+  const syncUnsyncedSubmissions = async () => {
+    const raw = localStorage.getItem("pcos_unsynced_submissions");
+    if (!raw) {
+      setUnsyncedCount(0);
+      return;
+    }
+    let unsyncedList: any[] = [];
+    try {
+      unsyncedList = JSON.parse(raw);
+    } catch {
+      localStorage.removeItem("pcos_unsynced_submissions");
+      setUnsyncedCount(0);
+      return;
+    }
+    if (unsyncedList.length === 0) {
+      setUnsyncedCount(0);
+      return;
+    }
+    if (isSyncing) return;
+    setIsSyncing(true);
+    
+    const remaining: any[] = [];
+    for (const record of unsyncedList) {
+      try {
+        const { localId, ...payload } = record;
+        const docRef = await promiseWithTimeout(
+          addDoc(collection(db, "submissions"), payload),
+          3000,
+          "云端同步超时"
+        );
+        console.log("Successfully synced local record to Firestore:", docRef.id);
+        
+        if (submissionId === localId) {
+          setSubmissionId(docRef.id);
+        }
+      } catch (err) {
+        console.warn("同步单条记录失败，保留在缓存中:", err);
+        remaining.push(record);
+      }
+    }
+    
+    if (remaining.length > 0) {
+      localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(remaining));
+    } else {
+      localStorage.removeItem("pcos_unsynced_submissions");
+    }
+    setUnsyncedCount(remaining.length);
+    setIsSyncing(false);
+  };
+
   const startEvaluation = () => {
     setViewState("evaluating");
     setCurrentStep(0);
@@ -153,63 +241,132 @@ export default function App() {
   const submitPatientData = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     setIsSubmitting(true);
-    try {
-      const finalProfile = getMatchedProfile();
-      const finalRotterdam = getMatchedRotterdamPhenotype();
-      
-      const payload = {
-        patientName: patientName.trim() || "匿名患者",
-        patientId: patientId.trim() || "未提供",
-        answers,
-        rotterdamAnswers,
-        matchedRotterdam: {
-          code: finalRotterdam.code,
-          name: finalRotterdam.name,
-          definition: finalRotterdam.definition
-        },
-        matchedProfile: {
-          id: finalProfile.id,
-          title: finalProfile.title,
-          concernText: finalProfile.concernText
-        },
-        heightCm,
-        weightKg,
-        waistCm,
-        calculatedBmi: calculatedBmi || null,
-        bmiCategory: bmiCategory || "",
-        createdAt: new Date().toISOString(),
-        feedback: null
-      };
+    
+    const finalProfile = getMatchedProfile();
+    const finalRotterdam = getMatchedRotterdamPhenotype();
+    
+    const payload = {
+      patientName: patientName.trim() || "匿名患者",
+      patientId: patientId.trim() || "未提供",
+      answers,
+      rotterdamAnswers,
+      matchedRotterdam: {
+        code: finalRotterdam.code,
+        name: finalRotterdam.name,
+        definition: finalRotterdam.definition
+      },
+      matchedProfile: {
+        id: finalProfile.id,
+        title: finalProfile.title,
+        concernText: finalProfile.concernText
+      },
+      heightCm,
+      weightKg,
+      waistCm,
+      calculatedBmi: calculatedBmi || null,
+      bmiCategory: bmiCategory || "",
+      createdAt: new Date().toISOString(),
+      feedback: null
+    };
 
-      const docRef = await addDoc(collection(db, "submissions"), payload);
+    const tempLocalId = `local_${Date.now()}`;
+
+    try {
+      // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝不让用户在手机上卡死
+      const docRef = await promiseWithTimeout(
+        addDoc(collection(db, "submissions"), payload),
+        2500,
+        "写入云端数据库超时"
+      );
       setSubmissionId(docRef.id);
-      setViewState("result");
-      setActiveTab("portrait");
+      console.log("档案已成功保存至云端，记录ID:", docRef.id);
     } catch (err) {
-      console.error("提交数据失败:", err);
-      // Fallback: continue showing result
-      setViewState("result");
-      setActiveTab("portrait");
+      console.warn("保存到云端失败/超时，已自动保存至本地缓存，稍后连网后将自动同步:", err);
+      
+      // 保存至本地 localStorage 的待同步队列中
+      try {
+        const unsyncedRaw = localStorage.getItem("pcos_unsynced_submissions");
+        const unsyncedList = unsyncedRaw ? JSON.parse(unsyncedRaw) : [];
+        unsyncedList.push({ localId: tempLocalId, ...payload });
+        localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(unsyncedList));
+        setUnsyncedCount(unsyncedList.length);
+      } catch (storageErr) {
+        console.error("写入本地缓存失败:", storageErr);
+      }
+      
+      setSubmissionId(tempLocalId);
     } finally {
       setIsSubmitting(false);
+      setViewState("result");
+      setActiveTab("portrait");
+      
+      // 异步在后台尝试同步其他历史暂存记录
+      setTimeout(() => {
+        syncUnsyncedSubmissions();
+      }, 800);
     }
   };
 
   const submitFeedback = async () => {
     if (!submissionId) return;
     setIsFeedbackSubmitting(true);
+    const feedbackPayload = {
+      rating: feedbackRating,
+      comment: feedbackComment.trim(),
+      submittedAt: new Date().toISOString()
+    };
+
+    if (submissionId.startsWith("local_")) {
+      // 本地缓存档案更新反馈
+      try {
+        const raw = localStorage.getItem("pcos_unsynced_submissions");
+        if (raw) {
+          const unsynced: any[] = JSON.parse(raw);
+          const updated = unsynced.map(record => {
+            if (record.localId === submissionId) {
+              return { ...record, feedback: feedbackPayload };
+            }
+            return record;
+          });
+          localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(updated));
+        }
+        setFeedbackSubmitted(true);
+      } catch (err) {
+        console.error("本地保存反馈失败:", err);
+      } finally {
+        setIsFeedbackSubmitting(false);
+      }
+      return;
+    }
+
+    // 云端档案更新反馈
     try {
       const docRef = doc(db, "submissions", submissionId);
-      await updateDoc(docRef, {
-        feedback: {
-          rating: feedbackRating,
-          comment: feedbackComment.trim(),
-          submittedAt: new Date().toISOString()
-        }
-      });
+      await promiseWithTimeout(
+        updateDoc(docRef, { feedback: feedbackPayload }),
+        2500,
+        "提交云端反馈超时"
+      );
       setFeedbackSubmitted(true);
     } catch (err) {
-      console.error("提交反馈失败:", err);
+      console.warn("提交反馈至云端超时或失败，已自动转存本地:", err);
+      // 虽然失败了，但为了让用户感到连贯，仍展示成功，并尝试在本地记录中保留(如果是之后待同步)
+      try {
+        const raw = localStorage.getItem("pcos_unsynced_submissions");
+        if (raw) {
+          const unsynced: any[] = JSON.parse(raw);
+          const updated = unsynced.map(record => {
+            if (record.localId === submissionId) {
+              return { ...record, feedback: feedbackPayload };
+            }
+            return record;
+          });
+          localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(updated));
+        }
+      } catch (e) {
+        console.error(e);
+      }
+      setFeedbackSubmitted(true);
     } finally {
       setIsFeedbackSubmitting(false);
     }
@@ -236,19 +393,44 @@ export default function App() {
 
   const fetchAdminRecords = async () => {
     setIsLoadingRecords(true);
+    let fetched: any[] = [];
     try {
+      // 1. 尝试以 3.5秒超时 获取云端记录，防卡死
       const q = query(collection(db, "submissions"), orderBy("createdAt", "desc"));
-      const querySnapshot = await getDocs(q);
-      const records: any[] = [];
+      const querySnapshot = await promiseWithTimeout(
+        getDocs(q),
+        3500,
+        "加载云端记录超时"
+      );
       querySnapshot.forEach((doc) => {
-        records.push({ id: doc.id, ...doc.data() });
+        fetched.push({ id: doc.id, ...doc.data() });
       });
-      setAdminRecords(records);
     } catch (err) {
-      console.error("加载记录失败:", err);
-    } finally {
-      setIsLoadingRecords(false);
+      console.error("加载云端记录失败或超时，展示本地记录:", err);
     }
+
+    // 2. 获取本地缓存记录
+    let localRecords: any[] = [];
+    try {
+      const raw = localStorage.getItem("pcos_unsynced_submissions");
+      if (raw) {
+        const unsyncedList = JSON.parse(raw);
+        localRecords = unsyncedList.map((item: any) => ({
+          id: item.localId,
+          ...item,
+          isLocalOnly: true
+        }));
+      }
+    } catch (err) {
+      console.error("加载本地缓存档案失败:", err);
+    }
+
+    // 3. 合并并按创建时间倒序排列
+    const combined = [...localRecords, ...fetched];
+    combined.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    setAdminRecords(combined);
+    setIsLoadingRecords(false);
   };
 
   const deleteRecord = (id: string) => {
@@ -258,8 +440,25 @@ export default function App() {
   const confirmDeleteRecord = async () => {
     if (!recordToDelete) return;
     try {
-      await deleteDoc(doc(db, "submissions", recordToDelete));
-      setAdminRecords(prev => prev.filter(r => r.id !== recordToDelete));
+      if (recordToDelete.startsWith("local_")) {
+        // 本地缓存直接删除
+        const raw = localStorage.getItem("pcos_unsynced_submissions");
+        if (raw) {
+          const unsynced = JSON.parse(raw);
+          const updated = unsynced.filter((r: any) => r.localId !== recordToDelete);
+          localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(updated));
+          setUnsyncedCount(updated.length);
+        }
+        setAdminRecords(prev => prev.filter(r => r.id !== recordToDelete));
+      } else {
+        // 云端记录2.5秒超时删除
+        await promiseWithTimeout(
+          deleteDoc(doc(db, "submissions", recordToDelete)),
+          2500,
+          "删除云端记录超时"
+        );
+        setAdminRecords(prev => prev.filter(r => r.id !== recordToDelete));
+      }
       if (selectedRecord?.id === recordToDelete) {
         setSelectedRecord(null);
       }
@@ -1110,6 +1309,40 @@ export default function App() {
                   <span>保存自测报告/打印</span>
                 </button>
               </div>
+              
+              {/* 同步状态栏 */}
+              {unsyncedCount > 0 && (
+                <div className="bg-[#fffdf9] border-2 border-dashed border-[#ebd9c8] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs no-print text-left">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 bg-[#fdf1f5] text-watercolor-title rounded-xl flex items-center justify-center shrink-0">
+                      <Activity size={18} className="animate-pulse" />
+                    </div>
+                    <div>
+                      <h4 className="text-xs font-serif font-bold text-watercolor-title">部分自测档案未同步至云端后台</h4>
+                      <p className="text-[10px] text-[#666666] leading-relaxed mt-0.5">
+                        受当前手机网络环境限制，有 <strong>{unsyncedCount}</strong> 份记录已安全暂存在本地。网络正常后可点击重试同步。
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={syncUnsyncedSubmissions}
+                    disabled={isSyncing}
+                    className="px-4 py-2 bg-watercolor-title text-white hover:bg-[#8f3a3a] disabled:bg-gray-400 rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {isSyncing ? (
+                      <>
+                        <RefreshCw size={14} className="animate-spin" />
+                        <span>正在同步...</span>
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw size={14} />
+                        <span>手动重试云端同步</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+              )}
 
               {/* Combined Master Profile Hero Card */}
               <div className="bg-gradient-to-br from-[#fbdce2] to-[#cbdbe5] border border-watercolor-border/70 rounded-3xl p-6 md:p-8 text-watercolor-body relative overflow-hidden shadow-xs">
@@ -1125,13 +1358,24 @@ export default function App() {
 
                 <div className="relative space-y-4">
                   <div className="flex flex-wrap items-center justify-between gap-3">
-                    <div className="flex gap-2">
+                    <div className="flex flex-wrap gap-2">
                       <span className="text-[10px] bg-white/80 text-watercolor-title border border-watercolor-border/50 px-2.5 py-0.5 rounded font-mono font-black tracking-wider">
                         ROTTERDAM: {matchedRotterdam.code}
                       </span>
                       <span className="text-[10px] bg-white/80 text-watercolor-title border border-watercolor-border/50 px-2.5 py-0.5 rounded font-mono font-black tracking-wider">
                         METABOLIC PROFILE: {matchedProfile.id}
                       </span>
+                      {submissionId.startsWith("local_") ? (
+                        <span className="text-[10px] bg-amber-50 text-amber-700 border border-amber-200/60 px-2.5 py-0.5 rounded font-serif font-bold tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-amber-500 animate-pulse"></span>
+                          本地暂存 (待同步)
+                        </span>
+                      ) : (
+                        <span className="text-[10px] bg-emerald-50/90 text-emerald-700 border border-emerald-200/60 px-2.5 py-0.5 rounded font-serif font-bold tracking-wider flex items-center gap-1">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#1e5631]"></span>
+                          云端同步 (已连接)
+                        </span>
+                      )}
                     </div>
                     {(matchedProfile.id.startsWith("2") || matchedProfile.id === "3.2" || matchedProfile.id === "3.4") && (
                       <span className="text-xs bg-[#fdf1f5] text-watercolor-title border border-watercolor-border/40 px-3 py-1 rounded-full font-serif font-bold flex items-center gap-1.5 shadow-xs">
@@ -1841,6 +2085,11 @@ export default function App() {
                                 <span className="text-[10px] text-gray-500 font-mono block mt-0.5">
                                   ID: {rec.patientId || "未登记"}
                                 </span>
+                                {rec.isLocalOnly && (
+                                  <span className="inline-block mt-1 bg-amber-50 text-amber-700 border border-amber-200/50 px-1.5 py-0.5 rounded text-[9px] font-sans font-bold">
+                                    本地暂存 (待同步)
+                                  </span>
+                                )}
                               </div>
                               
                               <span className={`text-[10px] font-bold px-2 py-0.5 rounded border ${
@@ -1912,6 +2161,63 @@ export default function App() {
                           建档时间: {new Date(selectedRecord.createdAt).toLocaleString()}
                         </span>
                       </div>
+
+                      {selectedRecord.isLocalOnly && (
+                        <div className="bg-amber-50 border border-amber-200/70 rounded-2xl p-4 space-y-2 text-left">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                            <div className="flex gap-2 items-start">
+                              <AlertCircle size={16} className="text-amber-600 shrink-0 mt-0.5 animate-pulse" />
+                              <div>
+                                <p className="text-xs font-serif font-bold text-amber-900">这是一条保存在手机本地的暂存自测病历</p>
+                                <p className="text-[10px] text-amber-700 leading-relaxed mt-0.5">
+                                  该记录目前仅暂存在本设备的本地浏览器缓存中，电脑端或其他设备后台暂时无法查阅。
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              onClick={async () => {
+                                setIsSyncing(true);
+                                setSyncErrorMsg("");
+                                try {
+                                  const { id, isLocalOnly, ...payload } = selectedRecord;
+                                  const docRef = await promiseWithTimeout(
+                                    addDoc(collection(db, "submissions"), payload),
+                                    3000,
+                                    "手动同步超时"
+                                  );
+                                  console.log("Manual sync success:", docRef.id);
+                                  // Remove from local queue
+                                  const raw = localStorage.getItem("pcos_unsynced_submissions");
+                                  if (raw) {
+                                    const unsynced = JSON.parse(raw);
+                                    const updated = unsynced.filter((r: any) => r.localId !== id);
+                                    localStorage.setItem("pcos_unsynced_submissions", JSON.stringify(updated));
+                                    setUnsyncedCount(updated.length);
+                                  }
+                                  // Update admin state
+                                  setAdminRecords(prev => prev.map(r => r.id === id ? { id: docRef.id, ...payload } : r));
+                                  setSelectedRecord({ id: docRef.id, ...payload });
+                                } catch (e) {
+                                  console.error(e);
+                                  setSyncErrorMsg("手动同步失败：请检查网络连接、VPN设置或云端安全组规则。");
+                                } finally {
+                                  setIsSyncing(false);
+                                }
+                              }}
+                              disabled={isSyncing}
+                              className="px-3.5 py-2 bg-amber-600 hover:bg-amber-700 disabled:bg-gray-400 text-white rounded-xl text-xs font-serif font-bold transition-all shadow-xs cursor-pointer shrink-0 flex items-center justify-center gap-1.5"
+                            >
+                              <RefreshCw size={12} className={isSyncing ? "animate-spin" : ""} />
+                              <span>立即手动同步</span>
+                            </button>
+                          </div>
+                          {syncErrorMsg && (
+                            <p className="text-[10px] text-red-600 font-sans font-bold pt-1">
+                              ⚠️ {syncErrorMsg}
+                            </p>
+                          )}
+                        </div>
+                      )}
 
                       {/* Diagnostic Summary Grid */}
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
