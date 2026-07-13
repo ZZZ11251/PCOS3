@@ -47,9 +47,19 @@ import {
   deleteDoc
 } from "./firebase";
 
-import coverImg from "./assets/images/pcos_watercolor_illustration_1783960996955.jpg";
+import coverImgImport from "./assets/images/pcos_watercolor_illustration_1783960996955.jpg";
+
+const imageSources = [
+  coverImgImport,
+  "pcos_watercolor_illustration_1783960996955.jpg",
+  "/pcos_watercolor_illustration_1783960996955.jpg",
+  "./pcos_watercolor_illustration_1783960996955.jpg",
+  "https://ais-dev-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app/pcos_watercolor_illustration_1783960996955.jpg",
+  "https://ais-pre-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app/pcos_watercolor_illustration_1783960996955.jpg"
+];
 
 export default function App() {
+  const [currentImgIndex, setCurrentImgIndex] = useState(0);
   const [viewState, setViewState] = useState<"welcome" | "evaluating" | "patient-info" | "result" | "admin">("welcome");
   const [currentStep, setCurrentStep] = useState<number>(0); // Step 0: Rotterdam, Step 1-4: Q1-Q4
   const [activeFaq, setActiveFaq] = useState<number | null>(null);
@@ -517,10 +527,15 @@ export default function App() {
                   {/* Framed generated image representing "人体妇科解剖示意图柔和写实" */}
                   <div className="relative bg-white p-2.5 rounded-3xl shadow-md border border-watercolor-border/60 max-w-[280px] md:max-w-full overflow-hidden transform rotate-1 hover:rotate-0 transition-transform duration-300">
                     <img
-                      src={coverImg}
+                      src={imageSources[currentImgIndex]}
                       alt="PCOS 循证治疗知情辅助手册"
                       className="rounded-2xl object-cover w-full h-auto aspect-[3/4]"
                       referrerPolicy="no-referrer"
+                      onError={() => {
+                        if (currentImgIndex + 1 < imageSources.length) {
+                          setCurrentImgIndex(currentImgIndex + 1);
+                        }
+                      }}
                     />
                     <div className="absolute bottom-4 left-4 right-4 bg-white/95 backdrop-blur-xs p-3 rounded-xl border border-watercolor-border/40 text-center pointer-events-none">
                       <span className="block text-xs font-serif font-bold text-watercolor-title">PCOS 双向管理白皮书</span>
