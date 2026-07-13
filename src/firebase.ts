@@ -1,5 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, getDocs, updateDoc, doc, query, orderBy, deleteDoc } from "firebase/firestore";
+import { initializeFirestore, collection, addDoc, getDocs, updateDoc, doc, query, orderBy, deleteDoc } from "firebase/firestore";
 
 const firebaseConfig = {
   projectId: "gen-lang-client-0659401417",
@@ -15,7 +15,9 @@ const firebaseConfig = {
 // Initialize Firebase
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore specifying the custom database ID if available
-export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
+// Initialize Firestore specifying custom database ID and forcing long-polling for mobile/unstable connection robustness
+export const db = initializeFirestore(app, {
+  experimentalForceLongPolling: true,
+}, firebaseConfig.firestoreDatabaseId);
 
 export { collection, addDoc, getDocs, updateDoc, doc, query, orderBy, deleteDoc };
