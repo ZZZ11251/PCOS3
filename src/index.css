@@ -1,0 +1,69 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Noto Sans SC", "Source Han Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", serif;
+  --font-mono: "JetBrains Mono", monospace;
+
+  --color-watercolor-pink: #fdf1f5;
+  --color-watercolor-pink-trans: rgba(253, 241, 245, 0.65);
+  --color-watercolor-blue: #e5eef9;
+  --color-watercolor-blue-trans: rgba(229, 238, 249, 0.65);
+  --color-watercolor-green: #eaf7ee;
+  --color-watercolor-offwhite: #faf6f0;
+  --color-watercolor-cream: #fffdf9;
+  --color-watercolor-title: #782828;
+  --color-watercolor-body: #333333;
+  --color-watercolor-border: #ebd9c8;
+  --color-watercolor-border-light: #f4ede6;
+  --color-watercolor-highlight: #fff9db;
+}
+
+body {
+  background-color: #faf6f0;
+  background-image: 
+    radial-gradient(circle at 10% 20%, rgba(253, 241, 245, 0.95) 0%, rgba(253, 241, 245, 0) 50%),
+    radial-gradient(circle at 90% 15%, rgba(229, 238, 249, 0.9) 0%, rgba(229, 238, 249, 0) 55%),
+    radial-gradient(circle at 50% 60%, rgba(253, 241, 245, 0.6) 0%, rgba(253, 241, 245, 0) 60%),
+    radial-gradient(circle at 80% 85%, rgba(229, 238, 249, 0.9) 0%, rgba(229, 238, 249, 0) 50%),
+    radial-gradient(circle at 20% 80%, rgba(234, 247, 238, 0.6) 0%, rgba(234, 247, 238, 0) 45%);
+  background-attachment: fixed;
+  background-size: cover;
+}
+
+/* Custom scrollbar in Morandi color */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: #faf6f0;
+}
+::-webkit-scrollbar-thumb {
+  background: #ebd9c8;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #c9b7a6;
+}
+
+/* Style for clinical highlighters */
+.highlight {
+  background-color: #fff9db !important;
+  color: #782828;
+  font-weight: 600;
+  padding: 0.125rem 0.375rem;
+  border-radius: 0.375rem;
+  border: 1px dashed rgba(120, 40, 40, 0.15);
+}
+
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+  }
+  .no-print {
+    display: none !important;
+  }
+}
+

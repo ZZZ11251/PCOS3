@@ -1,0 +1,23 @@
+{
+  "collections": {
+    "submissions": {
+      "description": "Store patient self-test results, answers, and profile matches",
+      "fields": {
+        "id": "string",
+        "createdAt": "timestamp",
+        "patientName": "string",
+        "patientId": "string",
+        "answers": "map",
+        "rotterdamAnswers": "map",
+        "matchedRotterdam": "map",
+        "matchedProfile": "map",
+        "heightCm": "string",
+        "weightKg": "string",
+        "waistCm": "string",
+        "calculatedBmi": "number",
+        "bmiCategory": "string",
+        "feedback": "map"
+      }
+    }
+  }
+}

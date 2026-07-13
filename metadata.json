@@ -1,0 +1,6 @@
+{
+  "name": "PCOS 循证决策系统",
+  "description": "基于国际和中国诊疗指南的多囊卵巢综合征（PCOS）个体化分型决策、循证调理科普与避坑教育助手。",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
