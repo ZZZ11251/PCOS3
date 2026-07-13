@@ -47,7 +47,7 @@ import {
   deleteDoc
 } from "./firebase";
 
-import coverImg from "./assets/images/pcos_watercolor_illustration_1783960996955.jpg";
+const coverImg = (import.meta.env.BASE_URL || "./") + "pcos_watercolor_illustration_1783960996955.jpg";
 
 export default function App() {
   const [viewState, setViewState] = useState<"welcome" | "evaluating" | "patient-info" | "result" | "admin">("welcome");
