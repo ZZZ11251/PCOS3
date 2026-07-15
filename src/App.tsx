@@ -58,6 +58,14 @@ const imageSources = [
   "https://ais-pre-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app/pcos_watercolor_illustration_1783960996955.jpg"
 ];
 
+const getApiUrl = (path: string): string => {
+  const isCloudRun = window.location.hostname.includes("run.app") || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+  const base = isCloudRun
+    ? ""
+    : "https://ais-pre-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app";
+  return `${base}${path}`;
+};
+
 export default function App() {
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
   const [viewState, setViewState] = useState<"welcome" | "evaluating" | "patient-info" | "result" | "admin">("welcome");
@@ -174,7 +182,7 @@ export default function App() {
       try {
         const { localId, ...payload } = record;
         const res = await promiseWithTimeout(
-          fetch("/api/submissions", {
+          fetch(getApiUrl("/api/submissions"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -287,7 +295,7 @@ export default function App() {
       try {
         // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝对防手机卡死
         const res = await promiseWithTimeout(
-          fetch("/api/submissions", {
+          fetch(getApiUrl("/api/submissions"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
@@ -380,7 +388,7 @@ export default function App() {
     // 云端档案更新反馈
     try {
       const res = await promiseWithTimeout(
-        fetch(`/api/submissions/${submissionId}`, {
+        fetch(getApiUrl(`/api/submissions/${submissionId}`), {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ feedback: feedbackPayload })
@@ -439,7 +447,7 @@ export default function App() {
     try {
       // 1. 尝试以 3.5秒超时 获取云端记录，防卡死
       const res = await promiseWithTimeout(
-        fetch("/api/submissions"),
+        fetch(getApiUrl("/api/submissions")),
         3500,
         "加载云端记录超时"
       );
@@ -494,7 +502,7 @@ export default function App() {
       } else {
         // 云端记录2.5秒超时删除
         const res = await promiseWithTimeout(
-          fetch(`/api/submissions/${recordToDelete}`, { method: "DELETE" }),
+          fetch(getApiUrl(`/api/submissions/${recordToDelete}`), { method: "DELETE" }),
           2500,
           "删除云端记录超时"
         );
@@ -2229,7 +2237,7 @@ export default function App() {
                                 try {
                                   const { id, isLocalOnly, ...payload } = selectedRecord;
                                   const res = await promiseWithTimeout(
-                                    fetch("/api/submissions", {
+                                    fetch(getApiUrl("/api/submissions"), {
                                       method: "POST",
                                       headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify(payload)
