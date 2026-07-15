@@ -36,6 +36,16 @@ var db = (0, import_firestore.initializeFirestore)(firebaseApp, {
 }, firebaseConfig.firestoreDatabaseId);
 var app = (0, import_express.default)();
 var PORT = 3e3;
+app.use((req, res, next) => {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+  res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
+  res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization");
+  if (req.method === "OPTIONS") {
+    res.sendStatus(200);
+    return;
+  }
+  next();
+});
 app.use(import_express.default.json());
 app.post("/api/submissions", async (req, res) => {
   try {
