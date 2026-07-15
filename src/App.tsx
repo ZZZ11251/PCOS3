@@ -173,15 +173,22 @@ export default function App() {
     for (const record of unsyncedList) {
       try {
         const { localId, ...payload } = record;
-        const docRef = await promiseWithTimeout(
-          addDoc(collection(db, "submissions"), payload),
+        const res = await promiseWithTimeout(
+          fetch("/api/submissions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }),
           3000,
           "云端同步超时"
         );
-        console.log("Successfully synced local record to Firestore:", docRef.id);
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const resData = await res.json();
+        const serverId = resData.id;
+        console.log("Successfully synced local record to Firestore:", serverId);
         
         if (submissionId === localId) {
-          setSubmissionId(docRef.id);
+          setSubmissionId(serverId);
         }
       } catch (err) {
         console.warn("同步单条记录失败，保留在缓存中:", err);
@@ -279,13 +286,19 @@ export default function App() {
 
       try {
         // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝对防手机卡死
-        const docRef = await promiseWithTimeout(
-          addDoc(collection(db, "submissions"), payload),
+        const res = await promiseWithTimeout(
+          fetch("/api/submissions", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }),
           2500,
           "写入云端数据库超时"
         );
-        setSubmissionId(docRef.id);
-        console.log("档案已成功保存至云端，记录ID:", docRef.id);
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+        const resData = await res.json();
+        setSubmissionId(resData.id);
+        console.log("档案已成功保存至云端，记录ID:", resData.id);
       } catch (err) {
         console.warn("保存到云端失败/超时，自动保存至本地缓存，稍后连网后将自动同步:", err);
         
@@ -366,12 +379,16 @@ export default function App() {
 
     // 云端档案更新反馈
     try {
-      const docRef = doc(db, "submissions", submissionId);
-      await promiseWithTimeout(
-        updateDoc(docRef, { feedback: feedbackPayload }),
+      const res = await promiseWithTimeout(
+        fetch(`/api/submissions/${submissionId}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ feedback: feedbackPayload })
+        }),
         2500,
         "提交云端反馈超时"
       );
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
       setFeedbackSubmitted(true);
     } catch (err) {
       console.warn("提交反馈至云端超时或失败，已自动转存本地:", err);
@@ -421,15 +438,14 @@ export default function App() {
     let fetched: any[] = [];
     try {
       // 1. 尝试以 3.5秒超时 获取云端记录，防卡死
-      const q = query(collection(db, "submissions"), orderBy("createdAt", "desc"));
-      const querySnapshot = await promiseWithTimeout(
-        getDocs(q),
+      const res = await promiseWithTimeout(
+        fetch("/api/submissions"),
         3500,
         "加载云端记录超时"
       );
-      querySnapshot.forEach((doc) => {
-        fetched.push({ id: doc.id, ...doc.data() });
-      });
+      if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+      const data = await res.json();
+      fetched = data;
     } catch (err) {
       console.error("加载云端记录失败或超时，展示本地记录:", err);
     }
@@ -477,11 +493,12 @@ export default function App() {
         setAdminRecords(prev => prev.filter(r => r.id !== recordToDelete));
       } else {
         // 云端记录2.5秒超时删除
-        await promiseWithTimeout(
-          deleteDoc(doc(db, "submissions", recordToDelete)),
+        const res = await promiseWithTimeout(
+          fetch(`/api/submissions/${recordToDelete}`, { method: "DELETE" }),
           2500,
           "删除云端记录超时"
         );
+        if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
         setAdminRecords(prev => prev.filter(r => r.id !== recordToDelete));
       }
       if (selectedRecord?.id === recordToDelete) {
@@ -2211,12 +2228,18 @@ export default function App() {
                                 setSyncErrorMsg("");
                                 try {
                                   const { id, isLocalOnly, ...payload } = selectedRecord;
-                                  const docRef = await promiseWithTimeout(
-                                    addDoc(collection(db, "submissions"), payload),
+                                  const res = await promiseWithTimeout(
+                                    fetch("/api/submissions", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify(payload)
+                                    }),
                                     3000,
                                     "手动同步超时"
                                   );
-                                  console.log("Manual sync success:", docRef.id);
+                                  if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
+                                  const resData = await res.json();
+                                  console.log("Manual sync success:", resData.id);
                                   // Remove from local queue
                                   const raw = localStorage.getItem("pcos_unsynced_submissions");
                                   if (raw) {
@@ -2226,8 +2249,8 @@ export default function App() {
                                     setUnsyncedCount(updated.length);
                                   }
                                   // Update admin state
-                                  setAdminRecords(prev => prev.map(r => r.id === id ? { id: docRef.id, ...payload } : r));
-                                  setSelectedRecord({ id: docRef.id, ...payload });
+                                  setAdminRecords(prev => prev.map(r => r.id === id ? { id: resData.id, ...payload } : r));
+                                  setSelectedRecord({ id: resData.id, ...payload });
                                 } catch (e) {
                                   console.error(e);
                                   setSyncErrorMsg("手动同步失败：请检查网络连接、VPN设置或云端安全组规则。");
