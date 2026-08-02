@@ -26,16 +26,32 @@ var import_express = __toESM(require("express"), 1);
 var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_vite = require("vite");
-var import_app = require("firebase/app");
-var import_firestore = require("firebase/firestore");
-var configPath = import_path.default.join(process.cwd(), "firebase-applet-config.json");
-var firebaseConfig = JSON.parse(import_fs.default.readFileSync(configPath, "utf-8"));
-var firebaseApp = (0, import_app.initializeApp)(firebaseConfig);
-var db = (0, import_firestore.initializeFirestore)(firebaseApp, {
-  experimentalForceLongPolling: true
-}, firebaseConfig.firestoreDatabaseId);
 var app = (0, import_express.default)();
 var PORT = 3e3;
+var DATA_DIR = import_path.default.join(process.cwd(), "data");
+var DATA_FILE = import_path.default.join(DATA_DIR, "submissions.json");
+if (!import_fs.default.existsSync(DATA_DIR)) {
+  import_fs.default.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!import_fs.default.existsSync(DATA_FILE)) {
+  import_fs.default.writeFileSync(DATA_FILE, JSON.stringify([]), "utf-8");
+}
+var readSubmissions = () => {
+  try {
+    const raw = import_fs.default.readFileSync(DATA_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("\u8BFB\u53D6\u672C\u5730\u6570\u636E\u5931\u8D25:", e);
+    return [];
+  }
+};
+var writeSubmissions = (data) => {
+  try {
+    import_fs.default.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (e) {
+    console.error("\u5199\u5165\u672C\u5730\u6570\u636E\u5931\u8D25:", e);
+  }
+};
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
@@ -46,51 +62,64 @@ app.use((req, res, next) => {
   }
   next();
 });
-app.use(import_express.default.json());
-app.post("/api/submissions", async (req, res) => {
+app.use(import_express.default.json({ limit: "10mb" }));
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", gateway: "PCOS Independent API Gateway via Cloudflare" });
+});
+app.post("/api/submissions", (req, res) => {
   try {
     const payload = req.body;
-    const docRef = await (0, import_firestore.addDoc)((0, import_firestore.collection)(db, "submissions"), payload);
-    res.status(201).json({ id: docRef.id, success: true });
+    const submissions = readSubmissions();
+    const newDoc = {
+      id: "doc_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+      createdAt: (/* @__PURE__ */ new Date()).toISOString(),
+      ...payload
+    };
+    submissions.unshift(newDoc);
+    writeSubmissions(submissions);
+    console.log(`[\u81EA\u6D4B\u6863\u6848\u63D0\u4EA4\u6210\u529F] \u7F16\u53F7: ${newDoc.id}`);
+    res.status(201).json({ id: newDoc.id, success: true });
   } catch (err) {
-    console.error("Backend failed to save to Firestore:", err);
+    console.error("\u63D0\u4EA4\u6863\u6848\u5931\u8D25:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
-app.get("/api/submissions", async (req, res) => {
+app.get("/api/submissions", (req, res) => {
   try {
-    const q = (0, import_firestore.query)((0, import_firestore.collection)(db, "submissions"), (0, import_firestore.orderBy)("createdAt", "desc"));
-    const querySnapshot = await (0, import_firestore.getDocs)(q);
-    const fetched = [];
-    querySnapshot.forEach((doc2) => {
-      fetched.push({ id: doc2.id, ...doc2.data() });
-    });
-    res.status(200).json(fetched);
+    const submissions = readSubmissions();
+    submissions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    res.status(200).json(submissions);
   } catch (err) {
-    console.error("Backend failed to fetch from Firestore:", err);
+    console.error("\u8BFB\u53D6\u6863\u6848\u5217\u8868\u5931\u8D25:", err);
     res.status(500).json({ error: err.message || String(err) });
   }
 });
-app.patch("/api/submissions/:id", async (req, res) => {
+app.patch("/api/submissions/:id", (req, res) => {
   try {
     const { id } = req.params;
     const updatePayload = req.body;
-    const docRef = (0, import_firestore.doc)(db, "submissions", id);
-    await (0, import_firestore.updateDoc)(docRef, updatePayload);
+    const submissions = readSubmissions();
+    const index = submissions.findIndex((s) => s.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "\u6863\u6848\u672A\u627E\u5230", success: false });
+    }
+    submissions[index] = { ...submissions[index], ...updatePayload };
+    writeSubmissions(submissions);
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error("Backend failed to update Firestore doc:", err);
+    console.error("\u66F4\u65B0\u6863\u6848\u5931\u8D25:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
-app.delete("/api/submissions/:id", async (req, res) => {
+app.delete("/api/submissions/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const docRef = (0, import_firestore.doc)(db, "submissions", id);
-    await (0, import_firestore.deleteDoc)(docRef);
+    let submissions = readSubmissions();
+    submissions = submissions.filter((s) => s.id !== id);
+    writeSubmissions(submissions);
     res.status(200).json({ success: true });
   } catch (err) {
-    console.error("Backend failed to delete Firestore doc:", err);
+    console.error("\u5220\u9664\u6863\u6848\u5931\u8D25:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
@@ -109,10 +138,10 @@ async function main() {
     });
   }
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Full-Stack Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`PCOS Independent Server listening on http://0.0.0.0:${PORT}`);
   });
 }
 main().catch((err) => {
-  console.error("Server startup error:", err);
+  console.error("\u670D\u52A1\u5668\u542F\u52A8\u5931\u8D25:", err);
 });
 //# sourceMappingURL=server.cjs.map
