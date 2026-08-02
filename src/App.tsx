@@ -31,7 +31,16 @@ import {
   Check,
   Lock,
   RefreshCw,
-  Send
+  Send,
+  Copy,
+  Upload,
+  X,
+  Download,
+  Globe,
+  Server,
+  FileSpreadsheet,
+  HelpCircle,
+  ExternalLink
 } from "lucide-react";
 import { pcosData, faqs, questions, rotterdamPhenotypes } from "./data";
 import { UserAnswers, PCOSProfile, RotterdamAnswers, RotterdamPhenotype } from "./types";
@@ -54,16 +63,13 @@ const imageSources = [
   "pcos_watercolor_illustration_1783960996955.jpg",
   "/pcos_watercolor_illustration_1783960996955.jpg",
   "./pcos_watercolor_illustration_1783960996955.jpg",
+  "https://pcos.top/pcos_watercolor_illustration_1783960996955.jpg",
   "https://ais-dev-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app/pcos_watercolor_illustration_1783960996955.jpg",
   "https://ais-pre-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app/pcos_watercolor_illustration_1783960996955.jpg"
 ];
 
 const getApiUrl = (path: string): string => {
-  const isCloudRun = window.location.hostname.includes("run.app") || window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-  const base = isCloudRun
-    ? ""
-    : "https://ais-pre-xquqh5q2kld7p6vmc4rwik-600739606182.asia-northeast1.run.app";
-  return `${base}${path}`;
+  return path;
 };
 
 export default function App() {
@@ -121,6 +127,110 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [syncErrorMsg, setSyncErrorMsg] = useState<string>("");
   const [submitError, setSubmitError] = useState<string>("");
+
+  // Offline Sync States
+  const [showOfflineSyncModal, setShowOfflineSyncModal] = useState<boolean>(false);
+  const [offlineSyncInput, setOfflineSyncInput] = useState<string>("");
+  const [isImportingOffline, setIsImportingOffline] = useState<boolean>(false);
+  const [importStatusMsg, setImportStatusMsg] = useState<string>("");
+  const [copiedSyncCode, setCopiedSyncCode] = useState<boolean>(false);
+
+  // Custom Domestic Gateway States
+  const [customApiUrlInput, setCustomApiUrlInput] = useState<string>(() => localStorage.getItem("pcos_custom_api_url") || "");
+  const [showApiConfigModal, setShowApiConfigModal] = useState<boolean>(false);
+  const [showDomesticGuideModal, setShowDomesticGuideModal] = useState<boolean>(false);
+  const [apiSaveMsg, setApiSaveMsg] = useState<string>("");
+
+  // Export records to CSV
+  const exportRecordsToCSV = () => {
+    if (!adminRecords || adminRecords.length === 0) {
+      alert("当前暂无患者自测记录可供导出");
+      return;
+    }
+    const headers = [
+      "档案编号",
+      "建档时间",
+      "患者姓名/昵称",
+      "年龄",
+      "身高(cm)",
+      "体重(kg)",
+      "BMI",
+      "鹿特丹分型",
+      "胰岛素抵抗风险",
+      "高危代谢评估",
+      "生活方式指导重点",
+      "患者自评满意度"
+    ];
+
+    const rows = adminRecords.map((r, index) => {
+      return [
+        r.id || `REC-${index + 1}`,
+        r.createdAt ? new Date(r.createdAt).toLocaleString("zh-CN") : "-",
+        `"${(r.patientName || "未填").replace(/"/g, '""')}"`,
+        r.age || "-",
+        r.heightCm || "-",
+        r.weightKg || "-",
+        r.calculatedBmi ? r.calculatedBmi.toFixed(1) : "-",
+        `"${r.matchedRotterdam?.title || "未区分"}"`,
+        r.profile?.metabolicRisk || "-",
+        r.profile?.phenotypeTitle || "-",
+        `"${(r.profile?.lifestyleFocus || "").replace(/"/g, '""')}"`,
+        r.feedback?.rating ? `${r.feedback.rating}星` : "未评价"
+      ];
+    });
+
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `PCOS多囊患者档案汇总_${new Date().toISOString().slice(0, 10)}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // Helper to encode unsynced submissions into base64
+  const encodeSyncCode = (): string => {
+    try {
+      const raw = localStorage.getItem("pcos_unsynced_submissions");
+      if (!raw) return "";
+      const parsed = JSON.parse(raw);
+      if (parsed.length === 0) return "";
+      
+      const jsonStr = JSON.stringify(parsed);
+      const utf8Bytes = new TextEncoder().encode(jsonStr);
+      let binary = "";
+      const len = utf8Bytes.byteLength;
+      for (let i = 0; i < len; i++) {
+        binary += String.fromCharCode(utf8Bytes[i]);
+      }
+      return "PCOS-OFFLINE:" + btoa(binary);
+    } catch (e) {
+      console.error("编码离线同步码失败:", e);
+      return "";
+    }
+  };
+
+  // Helper to decode base64 back to array of submissions
+  const decodeSyncCode = (code: string): any[] | null => {
+    try {
+      const cleaned = code.trim();
+      if (!cleaned.startsWith("PCOS-OFFLINE:")) return null;
+      const base64Str = cleaned.substring("PCOS-OFFLINE:".length).trim();
+      const binary = atob(base64Str);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+      const jsonStr = new TextDecoder().decode(bytes);
+      const data = JSON.parse(jsonStr);
+      return Array.isArray(data) ? data : [data];
+    } catch (e) {
+      console.error("解码离线同步码失败:", e);
+      return null;
+    }
+  };
 
   // Helper to wrap Firestore operations in a promise that rejects after timeoutMs
   const promiseWithTimeout = <T,>(promise: Promise<T>, timeoutMs: number, errorMsg: string): Promise<T> => {
@@ -293,14 +403,14 @@ export default function App() {
       const tempLocalId = `local_${Date.now()}`;
 
       try {
-        // 尝试在 2.5 秒内写入云端，如超时直接捕获并进入本地缓存，绝对防手机卡死
+        // 尝试在 6 秒内写入云端，如超时直接捕获并进入本地缓存，保障流畅体验
         const res = await promiseWithTimeout(
           fetch(getApiUrl("/api/submissions"), {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           }),
-          2500,
+          6000,
           "写入云端数据库超时"
         );
         if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -441,14 +551,49 @@ export default function App() {
     setSelectedRecord(null);
   };
 
+  const handleImportOfflineCode = async () => {
+    if (!offlineSyncInput.trim()) return;
+    setIsImportingOffline(true);
+    setImportStatusMsg("");
+    try {
+      const records = decodeSyncCode(offlineSyncInput);
+      if (!records || records.length === 0) {
+        throw new Error("无效的离线数据码，请确保复制完整！");
+      }
+      
+      let successCount = 0;
+      for (const record of records) {
+        const { localId, id, isLocalOnly, ...payload } = record;
+        // Make request to backend to save to Firestore
+        const res = await fetch(getApiUrl("/api/submissions"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload)
+        });
+        if (!res.ok) throw new Error(`后端写入失败: ${res.status}`);
+        successCount++;
+      }
+      
+      setImportStatusMsg(`🎉 成功导入 ${successCount} 条离线患者自测档案！`);
+      setOfflineSyncInput("");
+      // Refresh admin list to display the new records
+      fetchAdminRecords();
+    } catch (err: any) {
+      console.error(err);
+      setImportStatusMsg(`❌ 导入失败：${err.message || String(err)}`);
+    } finally {
+      setIsImportingOffline(false);
+    }
+  };
+
   const fetchAdminRecords = async () => {
     setIsLoadingRecords(true);
     let fetched: any[] = [];
     try {
-      // 1. 尝试以 3.5秒超时 获取云端记录，防卡死
+      // 1. 尝试获取云端记录（8秒超时，保障在冷启动或慢速网络下流畅加载）
       const res = await promiseWithTimeout(
         fetch(getApiUrl("/api/submissions")),
-        3500,
+        8000,
         "加载云端记录超时"
       );
       if (!res.ok) throw new Error(`HTTP error! status: ${res.status}`);
@@ -1368,7 +1513,7 @@ export default function App() {
               
               {/* 同步状态栏 */}
               {unsyncedCount > 0 && (
-                <div className="bg-[#fffdf9] border-2 border-dashed border-[#ebd9c8] rounded-2xl p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xs no-print text-left">
+                <div className="bg-[#fffdf9] border-2 border-dashed border-[#ebd9c8] rounded-2xl p-4 flex flex-col md:flex-row items-center justify-between gap-3 shadow-xs no-print text-left">
                   <div className="flex items-center gap-3">
                     <div className="w-9 h-9 bg-[#fdf1f5] text-watercolor-title rounded-xl flex items-center justify-center shrink-0">
                       <Activity size={18} className="animate-pulse" />
@@ -1376,29 +1521,124 @@ export default function App() {
                     <div>
                       <h4 className="text-xs font-serif font-bold text-watercolor-title">部分自测档案未同步至云端后台</h4>
                       <p className="text-[10px] text-[#666666] leading-relaxed mt-0.5">
-                        受当前手机网络环境限制，有 <strong>{unsyncedCount}</strong> 份记录已安全暂存在本地。网络正常后可点击重试同步。
+                        受当前手机网络环境限制，有 <strong>{unsyncedCount}</strong> 份记录已安全暂存在本地。网络正常后可重试，或复制离线同步码。
                       </p>
                     </div>
                   </div>
-                  <button
-                    onClick={syncUnsyncedSubmissions}
-                    disabled={isSyncing}
-                    className="px-4 py-2 bg-watercolor-title text-white hover:bg-[#8f3a3a] disabled:bg-gray-400 rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    {isSyncing ? (
-                      <>
-                        <RefreshCw size={14} className="animate-spin" />
-                        <span>正在同步...</span>
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw size={14} />
-                        <span>手动重试云端同步</span>
-                      </>
-                    )}
-                  </button>
+                  <div className="flex gap-2 flex-wrap md:flex-nowrap shrink-0">
+                    <button
+                      onClick={syncUnsyncedSubmissions}
+                      disabled={isSyncing}
+                      className="px-3.5 py-2 bg-white text-watercolor-title hover:bg-[#fffdf9] border border-watercolor-border/50 disabled:bg-gray-100 rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      {isSyncing ? (
+                        <>
+                          <RefreshCw size={13} className="animate-spin" />
+                          <span>正在同步...</span>
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw size={13} />
+                          <span>手动同步</span>
+                        </>
+                      )}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowOfflineSyncModal(true);
+                        setCopiedSyncCode(false);
+                      }}
+                      className="px-3.5 py-2 bg-watercolor-title text-white hover:bg-[#8f3a3a] rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 shrink-0 cursor-pointer"
+                    >
+                      <Copy size={13} />
+                      <span>获取离线同步码</span>
+                    </button>
+                  </div>
                 </div>
               )}
+
+              {/* Offline Sync Modal */}
+              <AnimatePresence>
+                {showOfflineSyncModal && (
+                  <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 no-print">
+                    <motion.div
+                      initial={{ scale: 0.95, opacity: 0 }}
+                      animate={{ scale: 1, opacity: 1 }}
+                      exit={{ scale: 0.95, opacity: 0 }}
+                      className="bg-[#fffdf9] max-w-md w-full rounded-3xl border border-[#ebd9c8] p-6 shadow-xl relative text-left space-y-4"
+                    >
+                      <button
+                        onClick={() => setShowOfflineSyncModal(false)}
+                        className="absolute top-4 right-4 text-[#888888] hover:text-watercolor-title transition-colors"
+                      >
+                        <X size={20} />
+                      </button>
+                      
+                      <div className="flex items-center gap-2.5 text-watercolor-title">
+                        <div className="w-10 h-10 bg-[#fdf1f5] rounded-xl flex items-center justify-center">
+                          <Copy size={20} />
+                        </div>
+                        <div>
+                          <h3 className="font-serif font-bold text-base">复制离线数据同步码</h3>
+                          <p className="text-[10px] text-[#888888]">用于在无代理/无梯子的手机环境下同步数据</p>
+                        </div>
+                      </div>
+
+                      <div className="text-xs text-[#555555] space-y-2 leading-relaxed bg-[#fbf5ee] p-3.5 rounded-2xl border border-[#e8d5c4]/40">
+                        <p>
+                          由于中国大陆的手机网络无法直连 Google 数据库，您的自测报告已经安全保存在本地。
+                        </p>
+                        <p>
+                          <strong>💡 使用方法：</strong>
+                        </p>
+                        <ol className="list-decimal list-inside space-y-1 text-[#666666]">
+                          <li>点击下方按钮复制离线数据码。</li>
+                          <li>通过微信、QQ或邮件发给医生/老师（其电脑有日本代理或VPN可以访问后台）。</li>
+                          <li>医生在电脑后台管理界面，粘贴并点击「导入」即可。</li>
+                        </ol>
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-[#888888]">离线同步码 (已自动压缩)</label>
+                        <textarea
+                          readOnly
+                          value={encodeSyncCode()}
+                          className="w-full bg-white border border-[#e8d5c4] rounded-xl p-3 text-[10px] font-mono h-24 select-all resize-none focus:outline-none focus:ring-1 focus:ring-watercolor-title text-watercolor-body"
+                        />
+                      </div>
+
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            navigator.clipboard.writeText(encodeSyncCode());
+                            setCopiedSyncCode(true);
+                            setTimeout(() => setCopiedSyncCode(false), 2000);
+                          }}
+                          className="flex-1 py-2.5 bg-watercolor-title hover:bg-[#8f3a3a] text-white text-xs font-serif font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          {copiedSyncCode ? (
+                            <>
+                              <CheckCircle2 size={15} />
+                              <span>已成功复制到剪贴板!</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy size={15} />
+                              <span>复制离线数据码</span>
+                            </>
+                          )}
+                        </button>
+                        <button
+                          onClick={() => setShowOfflineSyncModal(false)}
+                          className="px-4 py-2.5 bg-white border border-[#ebd9c8] hover:bg-[#faf6f0] text-watercolor-body text-xs font-serif font-bold rounded-xl transition-all shadow-xs cursor-pointer"
+                        >
+                          关闭
+                        </button>
+                      </div>
+                    </motion.div>
+                  </div>
+                )}
+              </AnimatePresence>
 
               {/* Combined Master Profile Hero Card */}
               <div className="bg-gradient-to-br from-[#fbdce2] to-[#cbdbe5] border border-watercolor-border/70 rounded-3xl p-6 md:p-8 text-watercolor-body relative overflow-hidden shadow-xs">
@@ -1997,20 +2237,28 @@ export default function App() {
                   </h2>
                   <p className="text-xs text-[#666666] mt-0.5">查看多囊患者自测分型数据、代谢风险等级及患者反馈</p>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap md:flex-nowrap">
+                  <button
+                    onClick={exportRecordsToCSV}
+                    className="px-3.5 py-2 bg-[#fdf5f0] hover:bg-[#f3e5d8] text-watercolor-title border border-[#e8d5c4] rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
+                    title="导出全量患者自测档案为 CSV / Excel 表格"
+                  >
+                    <FileSpreadsheet size={14} />
+                    <span>导出 Excel 表格</span>
+                  </button>
                   <button
                     onClick={fetchAdminRecords}
                     disabled={isLoadingRecords}
                     className="px-3.5 py-2 bg-white hover:bg-[#faf6f0] text-watercolor-body border border-watercolor-border/50 rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                   >
-                    <RefreshCw size={13} className={isLoadingRecords ? "animate-spin" : ""} />
+                    <RefreshCw size={14} className={isLoadingRecords ? "animate-spin" : ""} />
                     <span>刷新数据</span>
                   </button>
                   <button
                     onClick={handleAdminLogout}
                     className="px-3.5 py-2 bg-watercolor-title hover:bg-[#8f3a3a] text-white border border-transparent rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
                   >
-                    <RotateCcw size={13} />
+                    <RotateCcw size={14} />
                     <span>退出后台</span>
                   </button>
                 </div>
@@ -2057,6 +2305,48 @@ export default function App() {
                     <span className="text-[10px] text-[#888888]">星 (共 {adminRecords.filter(r => r.feedback?.rating > 0).length} 条反馈)</span>
                   </div>
                 </div>
+              </div>
+
+              {/* 导入患者离线档案 Card */}
+              <div className="bg-[#fffdf9]/95 rounded-2xl border border-[#ebd9c8]/70 p-4 shadow-xs text-left space-y-3">
+                <div className="flex items-center gap-2 text-watercolor-title">
+                  <Upload size={16} />
+                  <span className="text-sm font-serif font-bold">导入患者离线自测数据</span>
+                </div>
+                <p className="text-[11px] text-[#666666] leading-relaxed">
+                  如果患者由于手机网络原因（国内网络）无法自动同步档案至云端，可以让患者在评估结果页点击<strong>「获取离线同步码」</strong>并微信发给您。在此粘贴同步码，即可一键将该自测档案写入云端。
+                </p>
+                <div className="flex flex-col sm:flex-row gap-2">
+                  <input
+                    type="text"
+                    placeholder="在此粘贴以 PCOS-OFFLINE: 开头的同步码..."
+                    value={offlineSyncInput}
+                    onChange={(e) => setOfflineSyncInput(e.target.value)}
+                    className="flex-1 bg-white border border-[#ebd9c8]/80 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-watercolor-title outline-none text-watercolor-body"
+                  />
+                  <button
+                    onClick={handleImportOfflineCode}
+                    disabled={isImportingOffline || !offlineSyncInput.trim()}
+                    className="px-4 py-2 bg-watercolor-title hover:bg-[#8f3a3a] disabled:bg-gray-300 text-white text-xs font-serif font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
+                  >
+                    {isImportingOffline ? (
+                      <>
+                        <RefreshCw size={13} className="animate-spin" />
+                        <span>正在导入...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Upload size={13} />
+                        <span>立即导入档案</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+                {importStatusMsg && (
+                  <p className={`text-[11px] font-bold ${importStatusMsg.includes("成功") ? "text-emerald-700" : "text-rose-700"}`}>
+                    {importStatusMsg}
+                  </p>
+                )}
               </div>
 
               {/* Main Workspace splitscreen */}

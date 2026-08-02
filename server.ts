@@ -2,25 +2,40 @@ import express from "express";
 import path from "path";
 import fs from "fs";
 import { createServer as createViteServer } from "vite";
-import { initializeApp } from "firebase/app";
-import { initializeFirestore, collection, addDoc, getDocs, updateDoc, doc, query, orderBy, deleteDoc } from "firebase/firestore";
-
-// Read firebase config from the root directory
-const configPath = path.join(process.cwd(), "firebase-applet-config.json");
-const firebaseConfig = JSON.parse(fs.readFileSync(configPath, "utf-8"));
-
-// Initialize Firebase App
-const firebaseApp = initializeApp(firebaseConfig);
-
-// Initialize Firestore specifying custom database ID and forcing long-polling for stability
-const db = initializeFirestore(firebaseApp, {
-  experimentalForceLongPolling: true,
-}, firebaseConfig.firestoreDatabaseId);
 
 const app = express();
 const PORT = 3000;
 
-// Enable CORS for external static hosts (like GitHub Pages)
+// 本地轻量高性能持久化存储引擎 (摆脱 Google Cloud 外部账号风控与网络超时)
+const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_FILE = path.join(DATA_DIR, "submissions.json");
+
+if (!fs.existsSync(DATA_DIR)) {
+  fs.mkdirSync(DATA_DIR, { recursive: true });
+}
+if (!fs.existsSync(DATA_FILE)) {
+  fs.writeFileSync(DATA_FILE, JSON.stringify([]), "utf-8");
+}
+
+const readSubmissions = (): any[] => {
+  try {
+    const raw = fs.readFileSync(DATA_FILE, "utf-8");
+    return JSON.parse(raw);
+  } catch (e) {
+    console.error("读取本地数据失败:", e);
+    return [];
+  }
+};
+
+const writeSubmissions = (data: any[]) => {
+  try {
+    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2), "utf-8");
+  } catch (e) {
+    console.error("写入本地数据失败:", e);
+  }
+};
+
+// 跨域支持 (开启 CORS 支持 Cloudflare 中转代理)
 app.use((req, res, next) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
@@ -32,64 +47,80 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json());
+app.use(express.json({ limit: "10mb" }));
 
-// API: POST /api/submissions - Create a new submission
-app.post("/api/submissions", async (req, res) => {
+// 健康检查接口
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", gateway: "PCOS Independent API Gateway via Cloudflare" });
+});
+
+// API: POST /api/submissions - 创建患者档案
+app.post("/api/submissions", (req, res) => {
   try {
     const payload = req.body;
-    const docRef = await addDoc(collection(db, "submissions"), payload);
-    res.status(201).json({ id: docRef.id, success: true });
+    const submissions = readSubmissions();
+    const newDoc = {
+      id: "doc_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7),
+      createdAt: new Date().toISOString(),
+      ...payload
+    };
+    submissions.unshift(newDoc);
+    writeSubmissions(submissions);
+    console.log(`[自测档案提交成功] 编号: ${newDoc.id}`);
+    res.status(201).json({ id: newDoc.id, success: true });
   } catch (err: any) {
-    console.error("Backend failed to save to Firestore:", err);
+    console.error("提交档案失败:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
 
-// API: GET /api/submissions - Retrieve all submissions
-app.get("/api/submissions", async (req, res) => {
+// API: GET /api/submissions - 获取全量患者档案
+app.get("/api/submissions", (req, res) => {
   try {
-    const q = query(collection(db, "submissions"), orderBy("createdAt", "desc"));
-    const querySnapshot = await getDocs(q);
-    const fetched: any[] = [];
-    querySnapshot.forEach((doc) => {
-      fetched.push({ id: doc.id, ...doc.data() });
-    });
-    res.status(200).json(fetched);
+    const submissions = readSubmissions();
+    // 确保按创建时间倒序排列
+    submissions.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
+    res.status(200).json(submissions);
   } catch (err: any) {
-    console.error("Backend failed to fetch from Firestore:", err);
+    console.error("读取档案列表失败:", err);
     res.status(500).json({ error: err.message || String(err) });
   }
 });
 
-// API: PATCH /api/submissions/:id - Update submission (e.g. feedback)
-app.patch("/api/submissions/:id", async (req, res) => {
+// API: PATCH /api/submissions/:id - 更新患者档案 (例如医生评语或随访反馈)
+app.patch("/api/submissions/:id", (req, res) => {
   try {
     const { id } = req.params;
     const updatePayload = req.body;
-    const docRef = doc(db, "submissions", id);
-    await updateDoc(docRef, updatePayload);
+    const submissions = readSubmissions();
+    const index = submissions.findIndex((s) => s.id === id);
+    if (index === -1) {
+      return res.status(404).json({ error: "档案未找到", success: false });
+    }
+    submissions[index] = { ...submissions[index], ...updatePayload };
+    writeSubmissions(submissions);
     res.status(200).json({ success: true });
   } catch (err: any) {
-    console.error("Backend failed to update Firestore doc:", err);
+    console.error("更新档案失败:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
 
-// API: DELETE /api/submissions/:id - Delete submission
-app.delete("/api/submissions/:id", async (req, res) => {
+// API: DELETE /api/submissions/:id - 删除患者档案
+app.delete("/api/submissions/:id", (req, res) => {
   try {
     const { id } = req.params;
-    const docRef = doc(db, "submissions", id);
-    await deleteDoc(docRef);
+    let submissions = readSubmissions();
+    submissions = submissions.filter((s) => s.id !== id);
+    writeSubmissions(submissions);
     res.status(200).json({ success: true });
   } catch (err: any) {
-    console.error("Backend failed to delete Firestore doc:", err);
+    console.error("删除档案失败:", err);
     res.status(500).json({ error: err.message || String(err), success: false });
   }
 });
 
-// Serve frontend with Vite dev middleware or static dist
+// 托管前端页面 (Vite Dev 或 生产静态资源)
 async function main() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
@@ -100,17 +131,16 @@ async function main() {
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    // Support single page application routing
     app.get("*", (req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
 
   app.listen(PORT, "0.0.0.0", () => {
-    console.log(`Full-Stack Server listening on http://0.0.0.0:${PORT}`);
+    console.log(`PCOS Independent Server listening on http://0.0.0.0:${PORT}`);
   });
 }
 
 main().catch((err) => {
-  console.error("Server startup error:", err);
+  console.error("服务器启动失败:", err);
 });
