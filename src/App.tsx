@@ -43,6 +43,7 @@ import {
   ExternalLink
 } from "lucide-react";
 import { pcosData, faqs, questions, rotterdamPhenotypes } from "./data";
+import { QuestionnaireForm } from "./components/QuestionnaireForm";
 import { UserAnswers, PCOSProfile, RotterdamAnswers, RotterdamPhenotype } from "./types";
 import {
   db,
@@ -71,6 +72,74 @@ const imageSources = [
 const getApiUrl = (path: string): string => {
   return path;
 };
+
+function FeedbackRecordCard({ 
+  record, 
+  onSelect 
+}: { 
+  record: any; 
+  onSelect: (r: any) => void 
+}) {
+  const [isExpanded, setIsExpanded] = useState<boolean>(false);
+  const rating = record.feedback?.rating || 5;
+  const comment = record.feedback?.comment || "未填写补充意见与建议";
+  const dateStr = record.feedback?.submittedAt 
+    ? new Date(record.feedback.submittedAt).toLocaleString("zh-CN") 
+    : (record.createdAt ? new Date(record.createdAt).toLocaleString("zh-CN") : "近期");
+
+  return (
+    <div className="p-4 bg-white border border-watercolor-border/40 rounded-2xl space-y-2.5 shadow-xs transition-all text-left">
+      <div className="flex justify-between items-start gap-2">
+        <div>
+          <span className="font-serif font-bold text-sm text-[#782828]">
+            {record.patientName || "匿名患者"}
+          </span>
+          <span className="text-[11px] text-gray-400 font-mono block">
+            ID: {record.patientId || "未登记"} · {dateStr}
+          </span>
+        </div>
+        <div className="flex items-center gap-1 bg-amber-50 border border-amber-200 text-amber-700 px-2.5 py-1 rounded-full text-xs font-bold shrink-0">
+          <Star size={12} className="fill-amber-400 text-amber-500" />
+          <span>{rating} 星评分</span>
+        </div>
+      </div>
+
+      <div className="pt-2 flex items-center justify-between border-t border-gray-100">
+        <button
+          type="button"
+          onClick={() => setIsExpanded(!isExpanded)}
+          className="text-xs font-serif font-bold text-[#1e5631] hover:text-watercolor-title flex items-center gap-1 cursor-pointer"
+        >
+          <span>{isExpanded ? "收起反馈意见" : "展开查看详细反馈意见/建议"}</span>
+          <ChevronRight size={13} className={`transition-transform duration-200 ${isExpanded ? "rotate-90" : ""}`} />
+        </button>
+
+        <button
+          type="button"
+          onClick={() => onSelect(record)}
+          className="text-[11px] text-watercolor-title font-bold hover:underline cursor-pointer flex items-center gap-1"
+        >
+          <span>调阅病历</span>
+          <ChevronRight size={12} />
+        </button>
+      </div>
+
+      {isExpanded && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: "auto" }}
+          exit={{ opacity: 0, height: 0 }}
+          className="pt-2"
+        >
+          <div className="bg-[#faf6f0] p-3 rounded-xl border border-watercolor-border/20 text-xs text-[#333] leading-relaxed">
+            <strong className="text-watercolor-title block mb-1">💬 反馈意见 / 建议摘要：</strong>
+            <p className="whitespace-pre-line">{comment}</p>
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+}
 
 export default function App() {
   const [currentImgIndex, setCurrentImgIndex] = useState(0);
@@ -122,6 +191,7 @@ export default function App() {
   const [searchTerm, setSearchTerm] = useState<string>("");
   const [filterPhenotype, setFilterPhenotype] = useState<string>("all");
   const [recordToDelete, setRecordToDelete] = useState<string | null>(null);
+  const [showFeedbackModal, setShowFeedbackModal] = useState<boolean>(false);
 
   const [unsyncedCount, setUnsyncedCount] = useState<number>(0);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -147,44 +217,67 @@ export default function App() {
       alert("当前暂无患者自测记录可供导出");
       return;
     }
+
     const headers = [
-      "档案编号",
-      "建档时间",
+      "建档ID",
+      "诊疗/病案ID",
       "患者姓名/昵称",
-      "年龄",
+      "建档时间",
+      "Rotterdam鹿特丹表型",
+      "月经与排卵异常(Rotterdam)",
+      "高雄激素表现/化验(Rotterdam)",
+      "卵巢多囊样改变PCO(Rotterdam)",
+      "Q1-月经周期特征",
+      "Q2-精制碳水与体重(胖/瘦)",
+      "Q3-胰岛素抵抗/血糖表现",
+      "Q4-生育计划需求",
       "身高(cm)",
       "体重(kg)",
-      "BMI",
-      "鹿特丹分型",
-      "胰岛素抵抗风险",
-      "高危代谢评估",
-      "生活方式指导重点",
-      "患者自评满意度"
+      "腰围(cm)",
+      "BMI指数",
+      "BMI分类",
+      "患者自评满意度(星级)",
+      "手册反馈问卷及留言明细"
     ];
 
     const rows = adminRecords.map((r, index) => {
+      const q1Val = r.answers?.q1 === 1 ? "1. 规律/基本正常" : r.answers?.q1 === 2 ? "2. 偶发延后(35-60天)" : r.answers?.q1 === 3 ? "3. 严重紊乱/频繁闭经" : "未选择";
+      const q2Val = r.answers?.q2 === 1 ? "1. 超重或肥胖" : r.answers?.q2 === 2 ? "2. 体重正常/偏瘦" : "未选择";
+      const q3Val = r.answers?.q3 === 1 ? "1. 有(确诊胰岛素抵抗/高血糖)" : r.answers?.q3 === 2 ? "2. 没有(血糖一直正常)" : "未选择";
+      const q4Val = r.answers?.q4 === 1 ? "1. 积极备孕/准备试管" : r.answers?.q4 === 2 ? "2. 调理身体/暂无备孕" : "未选择";
+
+      const ratingText = r.feedback?.rating ? `${r.feedback.rating} 星` : "未评价";
+      const commentText = r.feedback?.comment || "";
+
       return [
-        r.id || `REC-${index + 1}`,
-        r.createdAt ? new Date(r.createdAt).toLocaleString("zh-CN") : "-",
+        `"${r.id || `REC-${index + 1}`}"`,
+        `"${(r.patientId || "未登记").replace(/"/g, '""')}"`,
         `"${(r.patientName || "未填").replace(/"/g, '""')}"`,
-        r.age || "-",
-        r.heightCm || "-",
-        r.weightKg || "-",
-        r.calculatedBmi ? r.calculatedBmi.toFixed(1) : "-",
-        `"${r.matchedRotterdam?.title || "未区分"}"`,
-        r.profile?.metabolicRisk || "-",
-        r.profile?.phenotypeTitle || "-",
-        `"${(r.profile?.lifestyleFocus || "").replace(/"/g, '""')}"`,
-        r.feedback?.rating ? `${r.feedback.rating}星` : "未评价"
-      ];
+        `"${r.createdAt ? new Date(r.createdAt).toLocaleString("zh-CN") : "-"}"`,
+        `"表型 ${r.matchedRotterdam?.code || '未知'}: ${r.matchedRotterdam?.name || ''}"`,
+        `"${r.rotterdamAnswers?.hasMenstrualIssue ? '是' : '否'}"`,
+        `"${r.rotterdamAnswers?.hasAndrogenIssue ? '是' : '否'}"`,
+        `"${r.rotterdamAnswers?.hasUltrasoundIssue ? '是' : '否'}"`,
+        `"${q1Val}"`,
+        `"${q2Val}"`,
+        `"${q3Val}"`,
+        `"${q4Val}"`,
+        `"${r.heightCm || "-"}"`,
+        `"${r.weightKg || "-"}"`,
+        `"${r.waistCm || "-"}"`,
+        `"${r.calculatedBmi ? r.calculatedBmi.toFixed(1) : "-"}"`,
+        `"${r.bmiCategory || "-"}"`,
+        `"${ratingText}"`,
+        `"${commentText.replace(/"/g, '""').replace(/\n/g, ' ')}"`
+      ].join(",");
     });
 
-    const csvContent = "\uFEFF" + [headers.join(","), ...rows.map(e => e.join(","))].join("\n");
+    const csvContent = "\uFEFF" + [headers.join(","), ...rows].join("\n");
     const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8;" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
     link.setAttribute("href", url);
-    link.setAttribute("download", `PCOS多囊患者档案汇总_${new Date().toISOString().slice(0, 10)}.csv`);
+    link.setAttribute("download", `PCOS多囊患者自测与评估病历汇总表_${new Date().toISOString().slice(0, 10)}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -463,12 +556,13 @@ export default function App() {
     }
   };
 
-  const submitFeedback = async () => {
+  const submitFeedback = async (questionnaireAnswers?: Record<string, any>, commentSummary?: string) => {
     if (!submissionId) return;
     setIsFeedbackSubmitting(true);
     const feedbackPayload = {
-      rating: feedbackRating,
-      comment: feedbackComment.trim(),
+      rating: feedbackRating || 5,
+      comment: (commentSummary || feedbackComment).trim(),
+      answers: questionnaireAnswers || {},
       submittedAt: new Date().toISOString()
     };
 
@@ -510,7 +604,6 @@ export default function App() {
       setFeedbackSubmitted(true);
     } catch (err) {
       console.warn("提交反馈至云端超时或失败，已自动转存本地:", err);
-      // 虽然失败了，但为了让用户感到连贯，仍展示成功，并尝试在本地记录中保留(如果是之后待同步)
       try {
         const raw = localStorage.getItem("pcos_unsynced_submissions");
         if (raw) {
@@ -534,14 +627,14 @@ export default function App() {
 
   const handleAdminLogin = (e: React.FormEvent) => {
     e.preventDefault();
-    if (adminPin === "1234") {
+    if (adminPin.trim().toUpperCase() === "LMTWZ") {
       setViewState("admin");
       setShowAdminLogin(false);
       setAdminPin("");
       setAdminError("");
       fetchAdminRecords();
     } else {
-      setAdminError("PIN 码错误，请重新输入");
+      setAdminError("PIN 码错误，请输入 5 位授权 PIN 码");
     }
   };
 
@@ -2034,53 +2127,169 @@ export default function App() {
                         国际所有 PCOS 诊疗共识均建议：<strong>无论是否服用药物，生活方式调整都是多囊改善、恢复排卵、管理体质的根本根基。</strong>以下为您精心生成的精细化改善准则：
                       </div>
 
-                      <div className="space-y-6">
-                        {/* Diet plan card */}
-                        <div className="border border-watercolor-border/30 rounded-2xl p-5 space-y-3 bg-white">
+                      {/* 循证指南精细化干预与分类匹配 */}
+                      <div className="bg-[#fffdf9] border border-[#ebd9c8] rounded-2xl p-5 space-y-5 shadow-xs">
+                        <div className="border-b border-[#ebd9c8] pb-3">
                           <h4 className="text-sm md:text-base font-serif font-bold text-watercolor-title flex items-center gap-2">
-                            <Apple size={18} className="text-[#1e5631]" />
-                            <span>🍎 膳食与个性化营养管理建议</span>
+                            <Activity size={18} className="text-[#92400e]" />
+                            <span>📋 PCOS 循证指南三大核心干预指标</span>
                           </h4>
-                          <ul className="space-y-2.5 text-xs md:text-sm text-[#444] leading-relaxed">
-                            {matchedRotterdam.lifestyleIntervention.dietPlan.map((d, i) => (
-                              <li key={i} className="flex gap-2 items-start pl-1">
-                                <span className="text-[#1e5631] font-bold mt-0.5 shrink-0">✦</span>
-                                <span>{d}</span>
-                              </li>
-                            ))}
-                          </ul>
                         </div>
 
-                        {/* Exercise plan card */}
-                        <div className="border border-watercolor-border/30 rounded-2xl p-5 space-y-3 bg-white">
-                          <h4 className="text-sm md:text-base font-serif font-bold text-watercolor-title flex items-center gap-2">
-                            <Dumbbell size={18} className="text-[#1e40af]" />
-                            <span>🏋️‍♀️ 运动与骨骼肌代谢促进方案</span>
-                          </h4>
-                          <ul className="space-y-2.5 text-xs md:text-sm text-[#444] leading-relaxed">
-                            {matchedRotterdam.lifestyleIntervention.exercisePlan.map((e, i) => (
-                              <li key={i} className="flex gap-2 items-start pl-1">
-                                <span className="text-[#1e40af] font-bold mt-0.5 shrink-0">✦</span>
-                                <span>{e}</span>
-                              </li>
-                            ))}
-                          </ul>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                          <div className="bg-[#faf6f0] border border-[#ebd9c8]/60 p-3.5 rounded-xl text-left space-y-1">
+                            <span className="text-xs font-serif font-bold text-watercolor-title block">⚖️ 减重目标设定</span>
+                            <p className="text-xs text-[#555] leading-relaxed">
+                              超重患者（BMI 24~27.9）建议 3~6 个月内减重 <strong>5%~10%</strong>；肥胖患者（BMI≥28）建议目标降 <strong>10%~15%</strong>。
+                            </p>
+                          </div>
+
+                          <div className="bg-[#faf6f0] border border-[#ebd9c8]/60 p-3.5 rounded-xl text-left space-y-1">
+                            <span className="text-xs font-serif font-bold text-watercolor-title block">🏃‍♀️ 运动强度标准</span>
+                            <p className="text-xs text-[#555] leading-relaxed">
+                              超重/肥胖及代谢异常人群，推荐每周 <strong>≥250分钟</strong> 中等强度或 <strong>≥150分钟</strong> 高强度运动，配合每周 <strong>2天</strong> 肌肉力量训练。
+                            </p>
+                          </div>
+
+                          <div className="bg-[#faf6f0] border border-[#ebd9c8]/60 p-3.5 rounded-xl text-left space-y-1">
+                            <span className="text-xs font-serif font-bold text-watercolor-title block">🔥 热量控制预算</span>
+                            <p className="text-xs text-[#555] leading-relaxed">
+                              每日总热量控制在 <strong>1200~1500 kcal</strong>，制造合理热量缺口，保持碳水、蛋白质和优质脂肪占比平衡。
+                            </p>
+                          </div>
                         </div>
 
-                        {/* Rest and Supp card */}
-                        <div className="border border-watercolor-border/30 rounded-2xl p-5 space-y-3 bg-white">
-                          <h4 className="text-sm md:text-base font-serif font-bold text-watercolor-title flex items-center gap-2">
-                            <Moon size={18} className="text-[#92400e]" />
-                            <span>💊 作息时间与针对性微营养补充</span>
-                          </h4>
-                          <ul className="space-y-2.5 text-xs md:text-sm text-[#444] leading-relaxed">
-                            {matchedRotterdam.lifestyleIntervention.restAndSupp.map((r, i) => (
-                              <li key={i} className="flex gap-2 items-start pl-1">
-                                <span className="text-[#92400e] font-bold mt-0.5 shrink-0">✦</span>
-                                <span>{r}</span>
-                              </li>
-                            ))}
-                          </ul>
+                        {/* Single Matching Classification Guidance Card */}
+                        <div className="space-y-3 pt-2">
+                          <h5 className="text-xs font-serif font-bold text-watercolor-title flex items-center gap-1.5">
+                            <Award size={15} className="text-[#92400e]" />
+                            <span>根据您的体质评估匹配的精细化干预方案：</span>
+                          </h5>
+
+                          {(() => {
+                            const isFat = answers.q2 === 1;
+                            const hasIR = answers.q3 === 1;
+
+                            let typeTitle = "";
+                            let dietDetails: string[] = [];
+                            let exerciseDetails: string[] = [];
+                            let restAndSuppDetails: string[] = [];
+
+                            if (isFat && hasIR) {
+                              typeTitle = "超重/肥胖 且 伴胰岛素抵抗 (BMI≥24, HOMA-IR异常)";
+                              dietDetails = [
+                                "膳食与热量规划：严格执行每日 1200~1500 kcal 热量预算，制造合理能量缺口。主食全面更换为低 GI 复杂碳水（如黑米、燕麦、藜麦、鹰嘴豆），粗粮占主食 50% 以上。",
+                                "抗炎与减糖重点：严格戒除游离糖（含糖饮料、奶茶、糕点）及高油炸食，选用特级初榨橄榄油。多摄入高纤维蔬菜与优质蛋白（鸡胸肉、深海鱼、豆制品），利用食物热效应平稳全天血糖。必要时可在医生指导下尝试 16:8 间歇性禁食。"
+                              ];
+                              exerciseDetails = [
+                                "运动强度与频次：推荐每周 ≥250 分钟中等强度有氧运动（如快走、游泳、骑车）或 ≥150 分钟高强度间歇运动（HIIT）。",
+                                "骨骼肌力量训练：配合每周 2~3 天抗阻力量训练（深蹲、臀桥、哑铃训练），以大幅增加骨骼肌糖原储备，直接激活 GLUT4 转运蛋白，提升外周胰岛素敏感度。建议运动时间放在餐后，避免清晨空腹剧烈运动导致皮质醇飙升。"
+                              ];
+                              restAndSuppDetails = [
+                                "作息管理：每晚 23:00 前入睡，保证 7.5~8 小时高质量睡眠，帮助下丘脑-垂体-卵巢轴（HPO轴）自我修复与皮质醇恢复平衡。",
+                                "针对性微营养：每日可补充高纯度维生素 D3 (建议 2000~4000 IU) 以改善胰岛素敏感性与卵母细胞质量；可在医师指导下补充肌醇（辅助改善细胞胰岛素信号传导）及高纯度深海鱼油 (高 EPA+DHA) 以降低机体低度慢性炎症。"
+                              ];
+                            } else if (isFat && !hasIR) {
+                              typeTitle = "超重/肥胖 且 无胰岛素抵抗 (BMI≥24, HOMA-IR正常)";
+                              dietDetails = [
+                                "热量负平衡与减重：核心任务是制造能量负平衡与减重。严格执行每日 1200~1500 kcal 膳食预算，少吃高饱和脂肪红肉、甜食及酒精。",
+                                "控体温和饮食：主食选择低 GI 复杂碳水，保持高蛋白高纤维结构。随着体重减轻 5%~10%，体内游离雄激素及黄体生成素（LH）过高现象将显著改善。"
+                              ];
+                              exerciseDetails = [
+                                "高效减脂方案：推荐每周 ≥250 分钟中等强度有氧运动（或 ≥150 分钟高强度运动），配合每周 2 天肌肉力量训练，重点促进体内脂肪分解并提升基础代谢率。"
+                              ];
+                              restAndSuppDetails = [
+                                "作息管理：保持规律作息，避免熬夜及夜间暴饮暴食。",
+                                "针对性微营养：遵医嘱关注血清维生素 D 基础水平，备孕人群可适量补充活性叶酸及辅酶 Q10（保护卵母细胞线粒体抗氧化能力）。"
+                              ];
+                            } else if (!isFat && hasIR) {
+                              typeTitle = "标准/偏瘦 且 伴胰岛素抵抗 (BMI<24, HOMA-IR异常)";
+                              dietDetails = [
+                                "切勿盲目节食：绝对不能节食或过度压低总热量！需维持健康标准体重（BMI 18.5~23.9），采用地中海抗炎膳食模式。",
+                                "平稳餐后血糖：丰富抗氧化食物（深色蔬菜、浆果、坚果），选择低 GI 慢糖碳水，多补充富含膳食纤维、镁与 Omega-3 的食物，平稳餐后血糖与胰岛素峰值。"
+                              ];
+                              exerciseDetails = [
+                                "增肌变敏感（灵魂开关）：每周 150 分钟中等强度有氧运动，务必重度强化每周 2~3 天的骨骼肌抗阻力量训练（如大腿、臀部力量训练）。瘦型胰岛素抵抗的关键在于“增加肌肉储存水池”，肌肉是葡萄糖最主要的消耗器官。"
+                              ];
+                              restAndSuppDetails = [
+                                "作息减压：规律作息，避免长期精神高压与高皮质醇状态。",
+                                "针对性微营养：可在医师评估指导下补充肌醇、维生素 D3 及 α-脂酸，提升外周组织对胰岛素的响应度与代谢稳定性。"
+                              ];
+                            } else {
+                              typeTitle = "标准/偏瘦 且 无胰岛素抵抗 (BMI<24, HOMA-IR正常)";
+                              dietDetails = [
+                                "维持标准体重：保持均衡营养与标准体重。无须过度限制热量，保证充足优质蛋白（蛋、奶、鱼、瘦肉、豆制品）与复合碳水，避免极端低碳水饮食导致下丘脑性月经紊乱。"
+                              ];
+                              exerciseDetails = [
+                                "日常活跃习惯：保持日常活跃，每周 150 分钟中等强度有氧运动（如瑜伽、普拉提、羽毛球） + 2 天基础力量训练，长久坚持以维持良好的内分泌稳定度。"
+                              ];
+                              restAndSuppDetails = [
+                                "作息与微营养：每晚 23:00 前入睡，注重铁、锌、活性叶酸及维生素 E 的日常膳食摄入，促进排卵与黄体功能平稳。"
+                              ];
+                            }
+
+                            return (
+                              <div className="p-5 md:p-6 rounded-2xl bg-[#fdf1f5] border border-watercolor-title ring-1 ring-watercolor-title/30 shadow-xs text-left space-y-4">
+                                <div className="flex items-center justify-between pb-3 border-b border-[#ebd9c8]/80">
+                                  <span className="text-sm md:text-base font-serif font-bold text-watercolor-title flex items-center gap-2">
+                                    <Sparkles size={18} className="text-watercolor-title" />
+                                    {typeTitle}
+                                  </span>
+                                  <span className="text-[10px] md:text-xs bg-watercolor-title text-white px-3 py-1 rounded-full font-serif font-bold shrink-0">
+                                    您的匹配体质干预方案
+                                  </span>
+                                </div>
+
+                                {/* 1. 膳食与营养管理 */}
+                                <div className="space-y-1.5">
+                                  <h6 className="text-xs md:text-sm font-serif font-bold text-[#1e5631] flex items-center gap-1.5">
+                                    <Apple size={15} />
+                                    <span>🥗 膳食与个性化营养管理建议：</span>
+                                  </h6>
+                                  <ul className="space-y-1.5 text-xs md:text-sm text-[#333] leading-relaxed pl-1">
+                                    {dietDetails.map((item, idx) => (
+                                      <li key={idx} className="flex items-start gap-1.5">
+                                        <span className="text-[#1e5631] font-bold shrink-0 mt-0.5">•</span>
+                                        <span>{item}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+
+                                {/* 2. 运动与骨骼肌代谢促进 */}
+                                <div className="space-y-1.5 pt-1">
+                                  <h6 className="text-xs md:text-sm font-serif font-bold text-[#1e40af] flex items-center gap-1.5">
+                                    <Dumbbell size={15} />
+                                    <span>🏋️‍♀️ 运动与骨骼肌代谢促进方案：</span>
+                                  </h6>
+                                  <ul className="space-y-1.5 text-xs md:text-sm text-[#333] leading-relaxed pl-1">
+                                    {exerciseDetails.map((item, idx) => (
+                                      <li key={idx} className="flex items-start gap-1.5">
+                                        <span className="text-[#1e40af] font-bold shrink-0 mt-0.5">•</span>
+                                        <span>{item}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+
+                                {/* 3. 作息与微营养补充 */}
+                                <div className="space-y-1.5 pt-1">
+                                  <h6 className="text-xs md:text-sm font-serif font-bold text-[#92400e] flex items-center gap-1.5">
+                                    <Moon size={15} />
+                                    <span>💊 作息时间与针对性微营养补充：</span>
+                                  </h6>
+                                  <ul className="space-y-1.5 text-xs md:text-sm text-[#333] leading-relaxed pl-1">
+                                    {restAndSuppDetails.map((item, idx) => (
+                                      <li key={idx} className="flex items-start gap-1.5">
+                                        <span className="text-[#92400e] font-bold shrink-0 mt-0.5">•</span>
+                                        <span>{item}</span>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                </div>
+                              </div>
+                            );
+                          })()}
                         </div>
                       </div>
                     </div>
@@ -2107,101 +2316,14 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Patient Feedback Card (Shown if submission ID exists) */}
+              {/* Patient Feedback Questionnaire (Shown if submission ID exists) */}
               {submissionId && (
-                <div className="bg-[#fffdf9]/95 rounded-3xl border border-watercolor-border/60 p-6 md:p-8 shadow-xs relative overflow-hidden mt-6 no-print">
-                  <div className="absolute top-0 right-0 w-32 h-32 bg-watercolor-pink-trans/20 rounded-full blur-2xl -mr-16 -mt-16 pointer-events-none"></div>
-                  
-                  <div className="flex items-center gap-2.5 mb-4">
-                    <div className="p-2 bg-[#fdf1f5] border border-[#fbdce2] text-watercolor-title rounded-xl shrink-0">
-                      <Star size={20} className="fill-current text-amber-500" />
-                    </div>
-                    <div>
-                      <h3 className="text-base md:text-lg font-serif font-bold text-watercolor-title">
-                        💌 测评结果与建议反馈
-                      </h3>
-                      <p className="text-[10px] text-[#666] font-mono mt-0.5">PATIENT FEEDBACK & ASSESSMENT RATING</p>
-                    </div>
-                  </div>
-
-                  {feedbackSubmitted ? (
-                    <div className="bg-[#eaf7ee] border border-[#d1ead8] p-5 rounded-2xl text-center space-y-2">
-                      <div className="w-10 h-10 bg-white text-[#1e5631] border border-[#d1ead8] rounded-full flex items-center justify-center mx-auto shadow-xs">
-                        <Check size={20} className="stroke-[3]" />
-                      </div>
-                      <h4 className="text-sm font-bold font-serif text-[#1e5631]">感谢您的宝贵反馈！</h4>
-                      <p className="text-xs text-[#1e5631]/80">您的真实改善意见是我们和科研/临床团队不断迭代该循证知识库的根本源泉。</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-4">
-                      <p className="text-xs text-[#555555] leading-relaxed">
-                        请评价该循证自测系统为您生成的诊疗与生活干预报告。您的评分与匿名意见将保存在系统病历中，方便您的主治医生后续在后台管理端调阅并制定更贴合您的康复决策。
-                      </p>
-
-                      <div>
-                        <span className="block text-xs font-medium text-[#555555] mb-2">对生成报告的实用性评分：</span>
-                        <div className="flex gap-2.5">
-                          {[1, 2, 3, 4, 5].map((star) => (
-                            <button
-                              key={star}
-                              type="button"
-                              onClick={() => setFeedbackRating(star)}
-                              className="p-1 cursor-pointer transition-transform hover:scale-110 focus:outline-none"
-                            >
-                              <Star
-                                size={28}
-                                className={`stroke-[1.5] ${
-                                  star <= feedbackRating
-                                    ? "fill-amber-400 text-amber-500"
-                                    : "text-gray-300 hover:text-amber-300"
-                                }`}
-                              />
-                            </button>
-                          ))}
-                          {feedbackRating > 0 && (
-                            <span className="text-xs font-serif font-bold text-watercolor-title ml-2 self-center bg-watercolor-highlight px-2.5 py-0.5 rounded border border-[#ebd9c8]">
-                              {feedbackRating} 分 ({feedbackRating === 5 ? "非常完美" : feedbackRating === 4 ? "实用清晰" : feedbackRating === 3 ? "比较有用" : feedbackRating === 2 ? "内容一般" : "仍需改进"})
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="space-y-1">
-                        <label htmlFor="feedbackComment" className="block text-xs font-medium text-[#555555]">
-                          补充您的改善意见或体验反馈 (可选)：
-                        </label>
-                        <textarea
-                          id="feedbackComment"
-                          value={feedbackComment}
-                          onChange={(e) => setFeedbackComment(e.target.value)}
-                          placeholder="例如：排版清晰，避坑指南非常有启发；或者写下您的康复希冀..."
-                          rows={3}
-                          className="w-full bg-white border border-watercolor-border/40 rounded-xl p-3 text-xs focus:border-watercolor-title/60 focus:outline-none text-[#333333] placeholder-[#999999]"
-                        ></textarea>
-                      </div>
-
-                      <div className="flex justify-end">
-                        <button
-                          type="button"
-                          onClick={submitFeedback}
-                          disabled={feedbackRating === 0 || isFeedbackSubmitting}
-                          className="px-5 py-2.5 bg-watercolor-title text-white hover:bg-[#8f3a3a] disabled:opacity-40 disabled:cursor-not-allowed rounded-xl text-xs font-serif font-bold transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
-                        >
-                          {isFeedbackSubmitting ? (
-                            <>
-                              <RefreshCw size={12} className="animate-spin" />
-                              <span>正在提交中...</span>
-                            </>
-                          ) : (
-                            <>
-                              <span>提交评估反馈</span>
-                              <Send size={12} />
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </div>
-                  )}
+                <div className="mt-6 no-print">
+                  <QuestionnaireForm
+                    onSubmit={submitFeedback}
+                    isSubmitting={isFeedbackSubmitting}
+                    isSubmitted={feedbackSubmitted}
+                  />
                 </div>
               )}
 
@@ -2291,8 +2413,15 @@ export default function App() {
                     <span className="text-[10px] text-[#888888]">例 (腰围≥80或BMI≥24)</span>
                   </div>
                 </div>
-                <div className="bg-white border border-watercolor-border/30 rounded-2xl p-4 shadow-xs">
-                  <span className="text-xs text-[#666666] font-medium block">患者自评满意度</span>
+                <div 
+                  onClick={() => setShowFeedbackModal(true)}
+                  className="bg-white border border-watercolor-border/30 hover:border-[#1e5631]/50 hover:bg-[#eaf7ee]/30 transition-all rounded-2xl p-4 shadow-xs cursor-pointer group text-left"
+                  title="点击查看所有患者体验反馈与改进建议"
+                >
+                  <div className="flex justify-between items-center">
+                    <span className="text-xs text-[#666666] font-medium block">患者自评满意度</span>
+                    <ExternalLink size={12} className="text-[#1e5631] opacity-60 group-hover:opacity-100 transition-opacity" />
+                  </div>
                   <div className="flex items-baseline gap-1 mt-1">
                     <span className="text-2xl font-serif font-bold text-[#1e5631]">
                       {(() => {
@@ -2304,49 +2433,10 @@ export default function App() {
                     </span>
                     <span className="text-[10px] text-[#888888]">星 (共 {adminRecords.filter(r => r.feedback?.rating > 0).length} 条反馈)</span>
                   </div>
+                  <span className="text-[9px] text-[#1e5631] font-bold block mt-1 underline underline-offset-2">
+                    点击查看意见反馈与建议明细 →
+                  </span>
                 </div>
-              </div>
-
-              {/* 导入患者离线档案 Card */}
-              <div className="bg-[#fffdf9]/95 rounded-2xl border border-[#ebd9c8]/70 p-4 shadow-xs text-left space-y-3">
-                <div className="flex items-center gap-2 text-watercolor-title">
-                  <Upload size={16} />
-                  <span className="text-sm font-serif font-bold">导入患者离线自测数据</span>
-                </div>
-                <p className="text-[11px] text-[#666666] leading-relaxed">
-                  如果患者由于手机网络原因（国内网络）无法自动同步档案至云端，可以让患者在评估结果页点击<strong>「获取离线同步码」</strong>并微信发给您。在此粘贴同步码，即可一键将该自测档案写入云端。
-                </p>
-                <div className="flex flex-col sm:flex-row gap-2">
-                  <input
-                    type="text"
-                    placeholder="在此粘贴以 PCOS-OFFLINE: 开头的同步码..."
-                    value={offlineSyncInput}
-                    onChange={(e) => setOfflineSyncInput(e.target.value)}
-                    className="flex-1 bg-white border border-[#ebd9c8]/80 rounded-xl px-3 py-2 text-xs focus:ring-1 focus:ring-watercolor-title outline-none text-watercolor-body"
-                  />
-                  <button
-                    onClick={handleImportOfflineCode}
-                    disabled={isImportingOffline || !offlineSyncInput.trim()}
-                    className="px-4 py-2 bg-watercolor-title hover:bg-[#8f3a3a] disabled:bg-gray-300 text-white text-xs font-serif font-bold rounded-xl transition-all shadow-xs flex items-center justify-center gap-1.5 shrink-0 cursor-pointer"
-                  >
-                    {isImportingOffline ? (
-                      <>
-                        <RefreshCw size={13} className="animate-spin" />
-                        <span>正在导入...</span>
-                      </>
-                    ) : (
-                      <>
-                        <Upload size={13} />
-                        <span>立即导入档案</span>
-                      </>
-                    )}
-                  </button>
-                </div>
-                {importStatusMsg && (
-                  <p className={`text-[11px] font-bold ${importStatusMsg.includes("成功") ? "text-emerald-700" : "text-rose-700"}`}>
-                    {importStatusMsg}
-                  </p>
-                )}
               </div>
 
               {/* Main Workspace splitscreen */}
@@ -2779,6 +2869,74 @@ export default function App() {
         </AnimatePresence>
       </main>
 
+      {/* PATIENT FEEDBACK DETAILS MODAL */}
+      <AnimatePresence>
+        {showFeedbackModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/45 backdrop-blur-xs no-print">
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="bg-[#fffdf9] rounded-3xl border border-watercolor-border/60 p-6 md:p-8 max-w-2xl w-full shadow-2xl relative overflow-hidden text-left max-h-[85vh] flex flex-col"
+            >
+              <div className="flex justify-between items-center pb-4 border-b border-watercolor-border/30">
+                <div>
+                  <h3 className="text-lg font-serif font-bold text-watercolor-title flex items-center gap-2">
+                    <Star size={20} className="fill-amber-400 text-amber-500" />
+                    <span>患者体验与答题反馈全览</span>
+                  </h3>
+                  <p className="text-xs text-gray-500 mt-0.5">
+                    来自患者在测评报告书末尾填写的问卷反馈与评级
+                  </p>
+                </div>
+                <button
+                  onClick={() => setShowFeedbackModal(false)}
+                  className="p-1.5 hover:bg-[#fdf1f5] rounded-lg border border-transparent hover:border-[#fbdce2] transition-colors cursor-pointer text-[#782828]"
+                >
+                  <XCircle size={20} />
+                </button>
+              </div>
+
+              {/* Scrollable list of feedback */}
+              <div className="overflow-y-auto space-y-4 py-4 shrink grow">
+                {(() => {
+                  const feedbackRecords = adminRecords.filter(r => r.feedback && (r.feedback.rating > 0 || r.feedback.comment));
+                  if (feedbackRecords.length === 0) {
+                    return (
+                      <div className="text-center py-12 text-[#888888] space-y-2 bg-[#fffdf9] border border-dashed border-watercolor-border/40 rounded-2xl">
+                        <Star size={28} className="mx-auto text-amber-300" />
+                        <p className="text-xs font-serif">暂无患者提交反馈</p>
+                      </div>
+                    );
+                  }
+
+                  return feedbackRecords.map((r, i) => (
+                    <FeedbackRecordCard
+                      key={r.id || i}
+                      record={r}
+                      onSelect={(rec) => {
+                        setSelectedRecord(rec);
+                        setShowFeedbackModal(false);
+                      }}
+                    />
+                  ));
+                })()}
+              </div>
+
+              <div className="pt-3 border-t border-watercolor-border/30 flex justify-between items-center text-xs text-gray-500">
+                <span>共 {adminRecords.filter(r => r.feedback?.rating > 0).length} 条评价记录</span>
+                <button
+                  onClick={() => setShowFeedbackModal(false)}
+                  className="px-4 py-2 bg-watercolor-title text-white rounded-xl text-xs font-serif font-bold hover:bg-[#8f3a3a] transition-all cursor-pointer"
+                >
+                  关闭窗口
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* ADMIN LOGIN MODAL */}
       <AnimatePresence>
         {showAdminLogin && (
@@ -2803,21 +2961,21 @@ export default function App() {
                   <Lock size={22} className="stroke-[2.5]" />
                 </div>
                 <h3 className="text-lg font-serif font-bold text-watercolor-title">登录管理后台</h3>
-                <p className="text-[11px] text-[#666666]">输入授权 PIN 码以读取患者自测档案</p>
+                <p className="text-[11px] text-[#666666]">输入 5 位授权 PIN 码以读取患者自测档案</p>
               </div>
 
               <form onSubmit={handleAdminLogin} className="space-y-4">
                 <div>
                   <label className="block text-xs font-medium text-[#555555] mb-1.5 text-center">
-                    管理后台 PIN 码
+                    管理后台 PIN 码 (5位)
                   </label>
                   <input
                     type="password"
-                    maxLength={6}
+                    maxLength={5}
                     required
                     value={adminPin}
                     onChange={(e) => setAdminPin(e.target.value)}
-                    placeholder="请输入 4 位 PIN 码"
+                    placeholder="请输入 5 位 PIN 码"
                     className="w-full bg-white border border-watercolor-border/40 rounded-xl p-3 text-center tracking-[0.5em] text-lg font-mono focus:border-watercolor-title/60 focus:outline-none text-[#333333] placeholder-gray-400"
                     style={{ letterSpacing: '0.2em' }}
                   />
